@@ -11,6 +11,8 @@
     HOST         — адрес (по умолчанию 127.0.0.1, для деплоя 0.0.0.0)
     DB_PATH      — путь к файлу БД (по умолчанию server/data/accounts.db)
     ALLOWED_ORIGIN — значение Access-Control-Allow-Origin (по умолчанию *)
+    ADMIN_NAMES  — ники через запятую, у которых есть права разработчика
+                   (по умолчанию MakarB2026)
 """
 
 from __future__ import annotations
@@ -41,6 +43,18 @@ SESSION_TTL = 60 * 60 * 24 * 30  # 30 дней
 MAX_BODY = 8 * 1024
 NAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁё0-9_]{3,20}$")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "")
+
+# Права разработчика выдаются по нику, а не по флагу в базе: так их нельзя
+# получить через API, и они переживают пересоздание базы на бесплатном тарифе.
+ADMIN_NAMES = {
+    n.strip().lower()
+    for n in os.environ.get("ADMIN_NAMES", "MakarB2026").split(",")
+    if n.strip()
+}
+
+
+def is_admin(name: str) -> bool:
+    return name.lower() in ADMIN_NAMES
 
 _db_lock = threading.Lock()
 
@@ -152,6 +166,7 @@ def user_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "kills": row["kills"],
         "rank": rank["rank"],
         "total": rank["total"],
+        "admin": is_admin(row["name"]),
     }
 
 
@@ -260,6 +275,12 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(401, "Требуется вход")
         return row
 
+    def require_admin(self, conn: sqlite3.Connection) -> sqlite3.Row:
+        row = self.require_user(conn)
+        if not is_admin(row["name"]):
+            raise ApiError(403, "Недостаточно прав")
+        return row
+
     # ------------------------------------------------------------- маршруты
     def do_OPTIONS(self) -> None:
         self.send_response(204)
@@ -311,6 +332,50 @@ class Handler(BaseHTTPRequestHandler):
                 with db() as conn:
                     row = self.require_user(conn)
                     self.send_json(200, {"user": user_payload(conn, row)})
+                return
+            if path == "/api/admin/users":
+                with db() as conn:
+                    self.require_admin(conn)
+                    search = (query.get("q") or [""])[0].strip().lower()
+                    sql = """SELECT * FROM users
+                             WHERE (? = '' OR name_key LIKE ?)
+                             ORDER BY best DESC, name LIMIT 200"""
+                    rows = conn.execute(sql, (search, f"%{search}%")).fetchall()
+                    self.send_json(200, {
+                        "users": [
+                            {
+                                "name": r["name"],
+                                "created": r["created_at"] * 1000,
+                                "best": r["best"],
+                                "games": r["games"],
+                                "kills": r["kills"],
+                                "admin": is_admin(r["name"]),
+                            }
+                            for r in rows
+                        ]
+                    })
+                return
+            if path == "/api/admin/stats":
+                with db() as conn:
+                    self.require_admin(conn)
+                    totals = conn.execute(
+                        """SELECT COUNT(*) AS users,
+                                  COALESCE(SUM(games), 0) AS games,
+                                  COALESCE(SUM(kills), 0) AS kills,
+                                  COALESCE(MAX(best), 0) AS best
+                           FROM users"""
+                    ).fetchone()
+                    active = conn.execute(
+                        "SELECT COUNT(*) FROM sessions WHERE expires_at > ?",
+                        (int(time.time()),),
+                    ).fetchone()[0]
+                    self.send_json(200, {
+                        "users": totals["users"],
+                        "games": totals["games"],
+                        "kills": totals["kills"],
+                        "best": totals["best"],
+                        "sessions": active,
+                    })
                 return
             self.send_json(404, {"error": "Неизвестный метод API"})
         except ApiError as exc:
@@ -400,6 +465,73 @@ class Handler(BaseHTTPRequestHandler):
                 row = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
                 self.send_json(200, {"user": user_payload(conn, row)})
             return
+
+        if path.startswith("/api/admin/"):
+            data = self.read_json()
+            target = str(data.get("name") or "").strip().lower()
+            if not target:
+                raise ApiError(400, "Укажите ник игрока")
+
+            if path == "/api/admin/reset-password":
+                password = str(data.get("password") or "")
+                if len(password) < 6:
+                    raise ApiError(400, "Пароль: минимум 6 символов")
+                if len(password) > 200:
+                    raise ApiError(400, "Пароль слишком длинный")
+                with db() as conn:
+                    self.require_admin(conn)
+                    row = conn.execute(
+                        "SELECT id FROM users WHERE name_key = ?", (target,)
+                    ).fetchone()
+                    if not row:
+                        raise ApiError(404, "Игрок не найден")
+                    conn.execute(
+                        "UPDATE users SET pass_hash = ? WHERE id = ?",
+                        (hash_password(password), row["id"]),
+                    )
+                    # Сбрасываем входы этого игрока — старый пароль больше не работает.
+                    conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+                self.send_json(200, {"ok": True})
+                return
+
+            if path == "/api/admin/edit-stats":
+                stats = {}
+                for field in ("best", "games", "kills"):
+                    if field in data:
+                        try:
+                            value = int(data[field])
+                        except (TypeError, ValueError):
+                            raise ApiError(400, f"Поле «{field}» должно быть целым числом")
+                        if value < 0 or value > 1_000_000:
+                            raise ApiError(400, f"Поле «{field}»: 0–1000000")
+                        stats[field] = value
+                if not stats:
+                    raise ApiError(400, "Нет полей для изменения")
+                sets = ", ".join(f"{k} = ?" for k in stats)
+                with db() as conn:
+                    self.require_admin(conn)
+                    cur = conn.execute(
+                        f"UPDATE users SET {sets} WHERE name_key = ?",
+                        (*stats.values(), target),
+                    )
+                    if cur.rowcount == 0:
+                        raise ApiError(404, "Игрок не найден")
+                self.send_json(200, {"ok": True})
+                return
+
+            if path == "/api/admin/delete-user":
+                with db() as conn:
+                    admin = self.require_admin(conn)
+                    row = conn.execute(
+                        "SELECT id, name FROM users WHERE name_key = ?", (target,)
+                    ).fetchone()
+                    if not row:
+                        raise ApiError(404, "Игрок не найден")
+                    if row["id"] == admin["id"]:
+                        raise ApiError(400, "Нельзя удалить собственный аккаунт")
+                    conn.execute("DELETE FROM users WHERE id = ?", (row["id"],))
+                self.send_json(200, {"ok": True})
+                return
 
         raise ApiError(404, "Неизвестный метод API")
 

@@ -33,6 +33,7 @@
     const tabReg = document.getElementById('tab-register');
     const loginError = document.getElementById('login-error');
     const regError = document.getElementById('reg-error');
+    const adminBtn = document.getElementById('admin-btn');
 
     /* --- Сетевой слой --- */
     async function api(path, { method = 'GET', body, auth = true } = {}) {
@@ -108,6 +109,7 @@
             document.getElementById('stat-kills').textContent = user.kills;
             document.getElementById('profile-rank').textContent =
                 user.rank && user.total ? `Ранг: #${user.rank} из ${user.total}` : '';
+            adminBtn.classList.toggle('hidden', !user.admin);
         } else {
             profileBtn.textContent = '👤 Войти';
             profileBtn.removeAttribute('data-logged');
@@ -268,7 +270,10 @@
     modal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeModal));
     modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
     document.addEventListener('keydown', e => {
-        if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+        if (e.key !== 'Escape') return;
+        if (!adminEditModal.classList.contains('hidden')) { adminEditModal.classList.add('hidden'); return; }
+        if (!adminModal.classList.contains('hidden')) { closeAdminModals(); return; }
+        if (!modal.classList.contains('hidden')) closeModal();
     });
 
     profileBtn.addEventListener('click', openModal);
@@ -300,6 +305,217 @@
         refreshUI();
         updateLeaderboard();
     })();
+
+    /* ============================================
+       ПАНЕЛЬ РАЗРАБОТЧИКА
+       ============================================ */
+    const adminModal = document.getElementById('admin-modal');
+    const adminEditModal = document.getElementById('admin-edit-modal');
+    const adminStatsEl = document.getElementById('admin-stats');
+    const adminSearch = document.getElementById('admin-search');
+    const adminUsersEl = document.getElementById('admin-users');
+    const adminEmpty = document.getElementById('admin-empty');
+    const adminError = document.getElementById('admin-error');
+    const editTitle = document.getElementById('admin-edit-title');
+    let adminTarget = null;   // ник редактируемого игрока
+    let searchTimer = null;
+
+    function openAdminModal() {
+        adminModal.classList.remove('hidden');
+        adminError.textContent = '';
+        loadAdminStats();
+        loadAdminUsers();
+    }
+    function closeAdminModals() {
+        adminModal.classList.add('hidden');
+        adminEditModal.classList.add('hidden');
+    }
+    adminBtn.addEventListener('click', openAdminModal);
+    adminModal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeAdminModals));
+    adminModal.addEventListener('click', e => { if (e.target === adminModal) closeAdminModals(); });
+    adminEditModal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => adminEditModal.classList.add('hidden')));
+    adminEditModal.addEventListener('click', e => { if (e.target === adminEditModal) adminEditModal.classList.add('hidden'); });
+
+    async function loadAdminStats() {
+        try {
+            const s = await api('/api/admin/stats');
+            adminStatsEl.innerHTML = '';
+            const cells = [
+                [s.users, 'игроков'],
+                [s.sessions, 'сессий'],
+                [s.games, 'игр всего'],
+                [s.kills, 'метеоритов'],
+                [s.best, 'топ рекорд']
+            ];
+            for (const [value, label] of cells) {
+                const el = document.createElement('div');
+                el.className = 'admin-stat';
+                const v = document.createElement('b');
+                v.textContent = value;
+                const l = document.createElement('span');
+                l.textContent = label;
+                el.append(v, l);
+                adminStatsEl.appendChild(el);
+            }
+        } catch (err) {
+            adminError.textContent = err.message;
+        }
+    }
+
+    async function loadAdminUsers() {
+        adminError.textContent = '';
+        adminUsersEl.innerHTML = '';
+        const q = adminSearch.value.trim();
+        let users = [];
+        try {
+            const data = await api('/api/admin/users?q=' + encodeURIComponent(q));
+            users = data.users || [];
+        } catch (err) {
+            adminEmpty.textContent = err.message;
+            adminEmpty.style.display = '';
+            return;
+        }
+        if (!users.length) {
+            adminEmpty.textContent = 'Никого не найдено';
+            adminEmpty.style.display = '';
+            return;
+        }
+        adminEmpty.style.display = 'none';
+        for (const u of users) {
+            const tr = document.createElement('tr');
+            const name = document.createElement('td');
+            name.textContent = u.name + (u.admin ? ' ⚙' : '');
+            const best = document.createElement('td'); best.textContent = u.best;
+            const games = document.createElement('td'); games.textContent = u.games;
+            const kills = document.createElement('td'); kills.textContent = u.kills;
+            const since = document.createElement('td');
+            since.textContent = new Date(u.created).toLocaleDateString('ru-RU');
+            const act = document.createElement('td');
+            const edit = document.createElement('button');
+            edit.type = 'button';
+            edit.className = 'admin-row-edit';
+            edit.textContent = 'Изменить';
+            edit.addEventListener('click', () => openAdminEdit(u));
+            act.appendChild(edit);
+            tr.append(name, best, games, kills, since, act);
+            adminUsersEl.appendChild(tr);
+        }
+    }
+
+    adminSearch.addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(loadAdminUsers, 300);
+    });
+    document.getElementById('admin-refresh').addEventListener('click', () => {
+        loadAdminStats();
+        loadAdminUsers();
+    });
+
+    /* --- Редактирование игрока --- */
+    const adminTabStats = document.getElementById('admin-tab-stats');
+    const adminTabPass = document.getElementById('admin-tab-pass');
+    const adminTabDel = document.getElementById('admin-tab-del');
+    const statsForm = document.getElementById('admin-stats-form');
+    const passForm = document.getElementById('admin-pass-form');
+    const delBlock = document.getElementById('admin-del-block');
+
+    function showAdminTab(which) {
+        adminTabStats.classList.toggle('active', which === 'stats');
+        adminTabPass.classList.toggle('active', which === 'pass');
+        adminTabDel.classList.toggle('active', which === 'del');
+        statsForm.classList.toggle('hidden', which !== 'stats');
+        passForm.classList.toggle('hidden', which !== 'pass');
+        delBlock.classList.toggle('hidden', which !== 'del');
+        document.getElementById('edit-stats-error').textContent = '';
+        document.getElementById('edit-pass-error').textContent = '';
+        document.getElementById('edit-del-error').textContent = '';
+    }
+    adminTabStats.addEventListener('click', () => showAdminTab('stats'));
+    adminTabPass.addEventListener('click', () => showAdminTab('pass'));
+    adminTabDel.addEventListener('click', () => showAdminTab('del'));
+
+    function openAdminEdit(u) {
+        adminTarget = u;
+        editTitle.textContent = 'Игрок: ' + u.name;
+        document.getElementById('edit-best').value = u.best;
+        document.getElementById('edit-games').value = u.games;
+        document.getElementById('edit-kills').value = u.kills;
+        document.getElementById('edit-pass').value = '';
+        showAdminTab('stats');
+        adminEditModal.classList.remove('hidden');
+    }
+
+    statsForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        if (!adminTarget || busy) return;
+        const errEl = document.getElementById('edit-stats-error');
+        errEl.textContent = '';
+        const btn = statsForm.querySelector('button[type=submit]');
+        busy = true; btn.disabled = true; btn.textContent = 'Сохраняем…';
+        try {
+            await api('/api/admin/edit-stats', {
+                method: 'POST',
+                body: {
+                    name: adminTarget.name,
+                    best: Number(document.getElementById('edit-best').value),
+                    games: Number(document.getElementById('edit-games').value),
+                    kills: Number(document.getElementById('edit-kills').value)
+                }
+            });
+            adminEditModal.classList.add('hidden');
+            loadAdminStats();
+            loadAdminUsers();
+            if (user && user.name === adminTarget.name) {
+                const data = await api('/api/me');
+                user = data.user;
+                refreshUI();
+            }
+        } catch (err) {
+            errEl.textContent = err.message;
+        } finally {
+            busy = false; btn.disabled = false; btn.textContent = 'Сохранить';
+        }
+    });
+
+    passForm.addEventListener('submit', async e => {
+        e.preventDefault();
+        if (!adminTarget || busy) return;
+        const errEl = document.getElementById('edit-pass-error');
+        errEl.textContent = '';
+        const btn = passForm.querySelector('button[type=submit]');
+        busy = true; btn.disabled = true; btn.textContent = 'Меняем…';
+        try {
+            await api('/api/admin/reset-password', {
+                method: 'POST',
+                body: { name: adminTarget.name, password: document.getElementById('edit-pass').value }
+            });
+            adminEditModal.classList.add('hidden');
+        } catch (err) {
+            errEl.textContent = err.message;
+        } finally {
+            busy = false; btn.disabled = false; btn.textContent = 'Сменить пароль';
+        }
+    });
+
+    document.getElementById('admin-delete-btn').addEventListener('click', async () => {
+        if (!adminTarget || busy) return;
+        const errEl = document.getElementById('edit-del-error');
+        errEl.textContent = '';
+        if (!confirm(`Удалить аккаунт «${adminTarget.name}» безвозвратно?`)) return;
+        const btn = document.getElementById('admin-delete-btn');
+        busy = true; btn.disabled = true; btn.textContent = 'Удаляем…';
+        try {
+            await api('/api/admin/delete-user', { method: 'POST', body: { name: adminTarget.name } });
+            adminEditModal.classList.add('hidden');
+            loadAdminStats();
+            loadAdminUsers();
+            updateLeaderboard();
+        } catch (err) {
+            errEl.textContent = err.message;
+        } finally {
+            busy = false; btn.disabled = false; btn.textContent = 'Удалить аккаунт';
+        }
+    });
 
     /* --- Для demo.js --- */
     window.__ss = {

@@ -339,8 +339,74 @@
                 </div>
                 <p id="profile-rank" class="profile-rank"></p>
                 <div class="profile-actions">
+                    <button id="admin-btn" class="btn btn-primary btn-block hidden" type="button">🛠 Панель разработчика</button>
                     <button id="logout-btn" class="btn btn-secondary" type="button">Выйти</button>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка панели разработчика -->
+    <div id="admin-modal" class="modal hidden">
+        <div class="modal-backdrop" data-close></div>
+        <div class="modal-card admin-card" role="dialog" aria-modal="true" aria-labelledby="admin-title">
+            <button class="modal-close" data-close type="button" aria-label="Закрыть">✕</button>
+            <h3 id="admin-title" class="admin-title">🛠 Панель разработчика</h3>
+
+            <div id="admin-stats" class="admin-stats"></div>
+
+            <div class="admin-toolbar">
+                <input type="search" id="admin-search" class="admin-search" placeholder="Поиск по нику…" autocomplete="off">
+                <button id="admin-refresh" class="btn btn-secondary btn-small" type="button">↻</button>
+            </div>
+            <p id="admin-error" class="form-error"></p>
+
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr><th>Ник</th><th>Рекорд</th><th>Игры</th><th>Убито</th><th>С</th><th></th></tr>
+                    </thead>
+                    <tbody id="admin-users"></tbody>
+                </table>
+                <p id="admin-empty" class="admin-empty">—</p>
+            </div>
+
+            <p class="auth-note">Действия видны только аккаунтам с правами разработчика. Смена пароля завершает все сессии игрока.</p>
+        </div>
+    </div>
+
+    <!-- Модалка редактирования игрока -->
+    <div id="admin-edit-modal" class="modal hidden">
+        <div class="modal-backdrop" data-close></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="admin-edit-title">
+            <button class="modal-close" data-close type="button" aria-label="Закрыть">✕</button>
+            <h3 id="admin-edit-title" class="admin-title">Игрок</h3>
+
+            <div class="auth-tabs">
+                <button id="admin-tab-stats" class="auth-tab active" type="button">Статистика</button>
+                <button id="admin-tab-pass" class="auth-tab" type="button">Пароль</button>
+                <button id="admin-tab-del" class="auth-tab" type="button">Удаление</button>
+            </div>
+
+            <form id="admin-stats-form" class="auth-form">
+                <label class="field"><span>Рекорд</span><input type="number" id="edit-best" min="0" max="1000000" required></label>
+                <label class="field"><span>Игр сыграно</span><input type="number" id="edit-games" min="0" max="1000000" required></label>
+                <label class="field"><span>Метеоритов уничтожено</span><input type="number" id="edit-kills" min="0" max="1000000" required></label>
+                <p id="edit-stats-error" class="form-error"></p>
+                <button type="submit" class="btn btn-primary btn-block">Сохранить</button>
+            </form>
+
+            <form id="admin-pass-form" class="auth-form hidden">
+                <label class="field"><span>Новый пароль</span><input type="text" id="edit-pass" minlength="6" maxlength="200" placeholder="Минимум 6 символов" required></label>
+                <p id="edit-pass-error" class="form-error"></p>
+                <button type="submit" class="btn btn-primary btn-block">Сменить пароль</button>
+                <p class="auth-note">Все активные сессии игрока будут завершены.</p>
+            </form>
+
+            <div id="admin-del-block" class="hidden">
+                <p class="admin-del-text">Аккаунт, его статистика и все сессии будут удалены безвозвратно.</p>
+                <p id="edit-del-error" class="form-error"></p>
+                <button id="admin-delete-btn" class="btn btn-danger btn-block" type="button">Удалить аккаунт</button>
             </div>
         </div>
     </div>
