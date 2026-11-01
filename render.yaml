@@ -1,14 +1,16 @@
-# Деплой сервера аккаунтов на Render.
-# Внимание: на бесплатном тарифе файловая система временная — база обнулится
-# при переразвёртывании. Для постоянного хранения подключите диск (платный план)
-# или разместите сервер на VPS, указав DB_PATH на постоянном разделе.
+# Деплой сервера аккаунтов на Render (Blueprint).
+# Free-план: диск подключить нельзя, база живёт в файловой системе сервиса и
+# обнуляется при каждом переразвёртывании. Для постоянного хранения перейдите
+# на платный план и раскомментируйте блок disk ниже.
 services:
   - type: web
     name: space-shooter-accounts
     runtime: python
     plan: free
-    buildCommand: "echo 'stdlib only - build not required'"
+    region: frankfurt
+    buildCommand: "pip install -r requirements.txt"
     startCommand: "python server/app.py"
+    healthCheckPath: /api/health
     envVars:
       - key: HOST
         value: 0.0.0.0
@@ -16,3 +18,12 @@ services:
         value: 10000
       - key: DB_PATH
         value: /opt/render/project/src/server/data/accounts.db
+      # Ограничить доступ только своим сайтом (по умолчанию разрешены любые
+      # источники, т.к. cookie не используются):
+      # - key: ALLOWED_ORIGIN
+      #   value: https://makarbogatirev-dot.github.io
+    # disk:
+    #   name: accounts-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    #   # при подключении диска задайте DB_PATH=/var/data/accounts.db

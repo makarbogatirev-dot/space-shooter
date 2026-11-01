@@ -35,43 +35,73 @@ serve_site.bat
 
 ## Публикация
 
-### Вариант 1: всё на одном хостинге (проще всего)
+Сайт статический (GitHub Pages), поэтому база аккаунтов живёт на отдельном
+сервере. Ниже — пошаговая инструкция для Render.
 
-Залейте репозиторий на Render как Web Service:
+### Шаг 1. Развернуть сервер аккаунтов
 
-- Build Command: `echo 'stdlib only - build not required'`
-- Start Command: `python server/app.py`
-- переменные окружения: `HOST=0.0.0.0`, `PORT=10000`
-- `DB_PATH` — путь к файлу базы. По умолчанию `server/data/accounts.db` внутри проекта,
-  но на бесплатном тарифе файловая система временная и база обнулится при
-  переразвёртывании. Для постоянного хранения подключите диск (Disk) на `/var/data`
-  и задайте `DB_PATH=/var/data/accounts.db`.
+1. Зарегистрируйтесь на <https://render.com> и привяжите GitHub-аккаунт
+   `makarbogatirev-dot`.
+2. В дашборде: **New → Blueprint**, выберите репозиторий `space-shooter`,
+   ветку `main`. Render прочитает `render.yaml` из корня и создаст сервис
+   `space-shooter-accounts` с нужными командами и переменными.
+   (Альтернатива: **New → Web Service**, тогда вручную задайте
+   Build Command `pip install -r requirements.txt`,
+   Start Command `python server/app.py`, план Free.)
+3. Дождитесь статуса **Live**. Проверьте, что API отвечает:
+   откройте `https://space-shooter-accounts.onrender.com/api/health` —
+   должно вернуться `{"ok": true}`.
 
-Файл `render.yaml` уже содержит эту конфигурацию. После деплоя сайт и аккаунты
-работают по одному адресу, `site/js/config.js` менять не нужно.
+Важно про бесплатный план: сервис засыпает после ~15 минут без запросов,
+первый запрос после сна грузится около минуты; файлы не сохраняются между
+переразвёртываниями, поэтому база обнулится при следующем деплое. Для
+постоянного хранения нужен платный план + диск: раскомментируйте блок `disk`
+в `render.yaml` и задайте `DB_PATH=/var/data/accounts.db`.
 
-### Вариант 2: сайт на GitHub Pages, сервер отдельно
+### Шаг 2. Указать адрес API в сайте
 
-1. Разверните сервер аккаунтов на Render/Railway/VPS (см. выше).
-2. В `site/js/config.js` укажите его адрес:
+Откройте `site/js/config.js` и впишите адрес сервиса из шага 1:
 
 ```js
 window.SS_API_BASE = 'https://space-shooter-accounts.onrender.com';
 ```
 
-3. Запушьте — GitHub Pages подхватит изменение.
+Затем закоммитьте и запушьте:
 
-CORS на сервере открыт (`Access-Control-Allow-Origin: *`), cookie не используются,
-поэтому такой вариант работает. Ограничить источник можно переменной
-`ALLOWED_ORIGIN=https://makarbogatirev-dot.github.io`.
+```bash
+git add site/js/config.js
+git commit -m "Указываю адрес сервера аккаунтов"
+git push origin main
+```
 
-### Вариант 3: свой VPS
+Через 1–2 минуты GitHub Pages обновится, и на сайте заработают регистрация,
+вход и общая таблица лидеров.
+
+### Шаг 3. Проверить
+
+1. Откройте <https://makarbogatirev-dot.github.io/space-shooter/site/>.
+2. Нажмите «👤 Войти» → «Регистрация», создайте аккаунт.
+3. Войдите с другого устройства или в режиме инкогнито — аккаунт и рекорд
+   должны быть на месте.
+
+### Ограничить доступ только своим сайтом (необязательно)
+
+По умолчанию CORS открыт для любого источника, потому что cookie не
+используются, а токен передаётся в заголовке. Чтобы разрешить только GitHub
+Pages, задайте в Render переменную окружения:
+
+```
+ALLOWED_ORIGIN=https://makarbogatirev-dot.github.io
+```
+
+### Вариант: свой VPS вместо Render
 
 ```bash
 HOST=0.0.0.0 PORT=8000 DB_PATH=/srv/space-shooter/accounts.db python3 server/app.py
 ```
 
 Перед ним поставьте nginx или Caddy с HTTPS — токены сессий должны идти по защищённому каналу.
+Затем так же укажите адрес в `site/js/config.js`.
 
 ## Структура
 

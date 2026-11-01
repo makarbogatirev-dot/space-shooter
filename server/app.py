@@ -202,6 +202,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
+    def client_ip(self) -> str:
+        # За прокси (Render, nginx) адрес сокета — это адрес прокси, поэтому
+        # берём первый адрес из X-Forwarded-For, иначе лимит попыток был бы общим.
+        forwarded = self.headers.get("X-Forwarded-For") or ""
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return self.client_address[0]
+
     def _cors_headers(self) -> None:
         # Авторизация идёт через заголовок Authorization, cookie не используются,
         # поэтому "*" безопасен и позволяет держать сайт на GitHub Pages.
@@ -312,7 +320,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(500, {"error": "Внутренняя ошибка сервера"})
 
     def handle_api_post(self, path: str) -> None:
-        ip = self.client_address[0]
+        ip = self.client_ip()
 
         if path == "/api/register":
             if too_many_attempts(ip):
