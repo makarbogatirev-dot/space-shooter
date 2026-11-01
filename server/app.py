@@ -104,10 +104,21 @@ def db_init() -> None:
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS banned_ips (
+                ip         TEXT    PRIMARY KEY,
+                reason     TEXT    NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                created_by TEXT    NOT NULL DEFAULT '',
+                expires_at INTEGER                     -- NULL = бессрочно
+            );
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_users_best   ON users(best DESC);
             """
         )
+        # Миграция: IP, с которого игрок заходил последним (для бана по нику).
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+        if "last_ip" not in cols:
+            conn.execute("ALTER TABLE users ADD COLUMN last_ip TEXT")
 
 
 # ------------------------------------------------------------------- пароли
@@ -168,6 +179,26 @@ def user_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "total": rank["total"],
         "admin": is_admin(row["name"]),
     }
+
+
+def ban_for_ip(conn: sqlite3.Connection, ip: str) -> sqlite3.Row | None:
+    """Активный бан для IP (NULL в expires_at = бессрочно)."""
+    if not ip:
+        return None
+    return conn.execute(
+        """SELECT * FROM banned_ips
+           WHERE ip = ? AND (expires_at IS NULL OR expires_at > ?)""",
+        (ip, int(time.time())),
+    ).fetchone()
+
+
+def require_not_banned(conn: sqlite3.Connection, ip: str) -> None:
+    ban = ban_for_ip(conn, ip)
+    if ban:
+        until = ("до " + time.strftime("%d.%m.%Y %H:%M", time.localtime(ban["expires_at"]))
+                 if ban["expires_at"] else "навсегда")
+        reason = f" Причина: {ban['reason']}" if ban["reason"] else ""
+        raise ApiError(403, f"Ваш IP заблокирован {until}.{reason}")
 
 
 def leaderboard(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
@@ -341,6 +372,12 @@ class Handler(BaseHTTPRequestHandler):
                              WHERE (? = '' OR name_key LIKE ?)
                              ORDER BY best DESC, name LIMIT 200"""
                     rows = conn.execute(sql, (search, f"%{search}%")).fetchall()
+                    banned = {
+                        r["ip"] for r in conn.execute(
+                            "SELECT ip FROM banned_ips WHERE expires_at IS NULL OR expires_at > ?",
+                            (int(time.time()),),
+                        )
+                    }
                     self.send_json(200, {
                         "users": [
                             {
@@ -350,6 +387,35 @@ class Handler(BaseHTTPRequestHandler):
                                 "games": r["games"],
                                 "kills": r["kills"],
                                 "admin": is_admin(r["name"]),
+                                "ip": r["last_ip"] or "",
+                                "banned": bool(r["last_ip"]) and r["last_ip"] in banned,
+                            }
+                            for r in rows
+                        ]
+                    })
+                return
+            if path == "/api/admin/bans":
+                with db() as conn:
+                    self.require_admin(conn)
+                    rows = conn.execute(
+                        """SELECT * FROM banned_ips
+                           WHERE expires_at IS NULL OR expires_at > ?
+                           ORDER BY created_at DESC LIMIT 200""",
+                        (int(time.time()),),
+                    ).fetchall()
+                    self.send_json(200, {
+                        "bans": [
+                            {
+                                "ip": r["ip"],
+                                "reason": r["reason"],
+                                "created": r["created_at"] * 1000,
+                                "by": r["created_by"],
+                                "expires": r["expires_at"] * 1000 if r["expires_at"] else None,
+                                "users": [
+                                    u["name"] for u in conn.execute(
+                                        "SELECT name FROM users WHERE last_ip = ?", (r["ip"],)
+                                    )
+                                ],
                             }
                             for r in rows
                         ]
@@ -403,14 +469,15 @@ class Handler(BaseHTTPRequestHandler):
 
             note_attempt(ip)
             with db() as conn:
+                require_not_banned(conn, ip)
                 if conn.execute(
                     "SELECT 1 FROM users WHERE name_key = ?", (name.lower(),)
                 ).fetchone():
                     raise ApiError(409, "Этот ник уже занят")
                 conn.execute(
-                    """INSERT INTO users (name, name_key, pass_hash, created_at)
-                       VALUES (?, ?, ?, ?)""",
-                    (name, name.lower(), hash_password(password), int(time.time())),
+                    """INSERT INTO users (name, name_key, pass_hash, created_at, last_ip)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    (name, name.lower(), hash_password(password), int(time.time()), ip),
                 )
                 row = conn.execute("SELECT * FROM users WHERE name_key = ?", (name.lower(),)).fetchone()
                 token = create_session(conn, row["id"])
@@ -429,10 +496,12 @@ class Handler(BaseHTTPRequestHandler):
 
             note_attempt(ip)
             with db() as conn:
+                require_not_banned(conn, ip)
                 row = conn.execute("SELECT * FROM users WHERE name_key = ?", (name.lower(),)).fetchone()
                 if not row or not verify_password(password, row["pass_hash"]):
                     raise ApiError(401, "Неверный ник или пароль")
                 reset_attempts(ip)
+                conn.execute("UPDATE users SET last_ip = ? WHERE id = ?", (ip, row["id"]))
                 token = create_session(conn, row["id"])
                 self.send_json(200, {"token": token, "user": user_payload(conn, row)})
             return
@@ -456,6 +525,7 @@ class Handler(BaseHTTPRequestHandler):
 
             with db() as conn:
                 row = self.require_user(conn)
+                require_not_banned(conn, ip)
                 conn.execute(
                     """UPDATE users
                        SET best = MAX(best, ?), games = games + 1, kills = kills + ?
@@ -469,7 +539,10 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/admin/"):
             data = self.read_json()
             target = str(data.get("name") or "").strip().lower()
-            if not target:
+
+            if path in ("/api/admin/ban", "/api/admin/unban"):
+                pass  # этим эндпоинтам нужен IP (или ник для поиска IP), проверка ниже
+            elif not target:
                 raise ApiError(400, "Укажите ник игрока")
 
             if path == "/api/admin/reset-password":
@@ -530,6 +603,59 @@ class Handler(BaseHTTPRequestHandler):
                     if row["id"] == admin["id"]:
                         raise ApiError(400, "Нельзя удалить собственный аккаунт")
                     conn.execute("DELETE FROM users WHERE id = ?", (row["id"],))
+                self.send_json(200, {"ok": True})
+                return
+
+            if path == "/api/admin/ban":
+                ip = str(data.get("ip") or "").strip()
+                if not ip and target:
+                    # Бан по нику: берём IP, с которого игрок заходил последним.
+                    with db() as peek:
+                        row = peek.execute(
+                            "SELECT last_ip FROM users WHERE name_key = ?", (target,)
+                        ).fetchone()
+                    if not row:
+                        raise ApiError(404, "Игрок не найден")
+                    if not row["last_ip"]:
+                        raise ApiError(400, "У игрока нет сохранённого IP — он ещё не входил")
+                    ip = row["last_ip"]
+                if not ip:
+                    raise ApiError(400, "Укажите ник или IP")
+                reason = str(data.get("reason") or "").strip()[:200]
+                try:
+                    days = int(data.get("days") or 0)
+                except (TypeError, ValueError):
+                    raise ApiError(400, "Срок бана: целое число дней (0 — навсегда)")
+                if days < 0 or days > 3650:
+                    raise ApiError(400, "Срок бана: 0–3650 дней")
+                expires = int(time.time()) + days * 86400 if days else None
+                with db() as conn:
+                    admin = self.require_admin(conn)
+                    if ban_for_ip(conn, ip):
+                        raise ApiError(409, "Этот IP уже заблокирован")
+                    conn.execute(
+                        """INSERT INTO banned_ips (ip, reason, created_at, created_by, expires_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (ip, reason, int(time.time()), admin["name"], expires),
+                    )
+                    # Бана сразу почувствовали: снимаем активные сессии игроков с этого IP.
+                    conn.execute(
+                        """DELETE FROM sessions WHERE user_id IN
+                           (SELECT id FROM users WHERE last_ip = ?)""",
+                        (ip,),
+                    )
+                self.send_json(200, {"ok": True, "ip": ip})
+                return
+
+            if path == "/api/admin/unban":
+                ip = str(data.get("ip") or "").strip()
+                if not ip:
+                    raise ApiError(400, "Укажите IP")
+                with db() as conn:
+                    self.require_admin(conn)
+                    cur = conn.execute("DELETE FROM banned_ips WHERE ip = ?", (ip,))
+                    if cur.rowcount == 0:
+                        raise ApiError(404, "Такого бана нет")
                 self.send_json(200, {"ok": True})
                 return
 

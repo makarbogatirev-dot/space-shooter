@@ -364,11 +364,22 @@
             <div class="admin-table-wrap">
                 <table class="admin-table">
                     <thead>
-                        <tr><th>Ник</th><th>Рекорд</th><th>Игры</th><th>Убито</th><th>С</th><th></th></tr>
+                        <tr><th>Ник</th><th>Рекорд</th><th>Игры</th><th>Убито</th><th>С</th><th>IP</th><th></th></tr>
                     </thead>
                     <tbody id="admin-users"></tbody>
                 </table>
                 <p id="admin-empty" class="admin-empty">—</p>
+            </div>
+
+            <h4 class="admin-subtitle">Заблокированные IP</h4>
+            <div class="admin-table-wrap admin-bans-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr><th>IP</th><th>Причина</th><th>Кто</th><th>До</th><th>Игроки</th><th></th></tr>
+                    </thead>
+                    <tbody id="admin-bans"></tbody>
+                </table>
+                <p id="admin-bans-empty" class="admin-empty">Блокировок нет</p>
             </div>
 
             <p class="auth-note">Действия видны только аккаунтам с правами разработчика. Смена пароля завершает все сессии игрока.</p>
@@ -385,6 +396,7 @@
             <div class="auth-tabs">
                 <button id="admin-tab-stats" class="auth-tab active" type="button">Статистика</button>
                 <button id="admin-tab-pass" class="auth-tab" type="button">Пароль</button>
+                <button id="admin-tab-ban" class="auth-tab" type="button">Бан</button>
                 <button id="admin-tab-del" class="auth-tab" type="button">Удаление</button>
             </div>
 
@@ -402,6 +414,18 @@
                 <button type="submit" class="btn btn-primary btn-block">Сменить пароль</button>
                 <p class="auth-note">Все активные сессии игрока будут завершены.</p>
             </form>
+
+            <div id="admin-ban-block" class="hidden">
+                <p class="admin-del-text" id="ban-ip-text">IP: —</p>
+                <label class="field"><span>Причина</span><input type="text" id="ban-reason" maxlength="200" placeholder="Например, читы"></label>
+                <label class="field">
+                    <span>Срок (дней, 0 — навсегда)</span>
+                    <input type="number" id="ban-days" min="0" max="3650" value="7">
+                </label>
+                <p id="edit-ban-error" class="form-error"></p>
+                <button id="admin-ban-btn" class="btn btn-danger btn-block" type="button">Заблокировать IP</button>
+                <button id="admin-unban-btn" class="btn btn-secondary btn-block hidden" type="button">Снять бан</button>
+            </div>
 
             <div id="admin-del-block" class="hidden">
                 <p class="admin-del-text">Аккаунт, его статистика и все сессии будут удалены безвозвратно.</p>

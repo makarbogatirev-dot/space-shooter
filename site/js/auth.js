@@ -325,6 +325,7 @@
         adminError.textContent = '';
         loadAdminStats();
         loadAdminUsers();
+        loadAdminBans();
     }
     function closeAdminModals() {
         adminModal.classList.add('hidden');
@@ -390,6 +391,8 @@
             const kills = document.createElement('td'); kills.textContent = u.kills;
             const since = document.createElement('td');
             since.textContent = new Date(u.created).toLocaleDateString('ru-RU');
+            const ip = document.createElement('td');
+            ip.textContent = u.banned ? '🚫 ' + (u.ip || '') : (u.ip || '—');
             const act = document.createElement('td');
             const edit = document.createElement('button');
             edit.type = 'button';
@@ -397,8 +400,58 @@
             edit.textContent = 'Изменить';
             edit.addEventListener('click', () => openAdminEdit(u));
             act.appendChild(edit);
-            tr.append(name, best, games, kills, since, act);
+            tr.append(name, best, games, kills, since, ip, act);
             adminUsersEl.appendChild(tr);
+        }
+    }
+
+    async function loadAdminBans() {
+        const bansEl = document.getElementById('admin-bans');
+        const bansEmpty = document.getElementById('admin-bans-empty');
+        bansEl.innerHTML = '';
+        let bans = [];
+        try {
+            const data = await api('/api/admin/bans');
+            bans = data.bans || [];
+        } catch (err) {
+            bansEmpty.textContent = err.message;
+            bansEmpty.style.display = '';
+            return;
+        }
+        if (!bans.length) {
+            bansEmpty.textContent = 'Блокировок нет';
+            bansEmpty.style.display = '';
+            return;
+        }
+        bansEmpty.style.display = 'none';
+        for (const b of bans) {
+            const tr = document.createElement('tr');
+            const ip = document.createElement('td'); ip.textContent = b.ip;
+            const reason = document.createElement('td'); reason.textContent = b.reason || '—';
+            const by = document.createElement('td'); by.textContent = b.by || '—';
+            const until = document.createElement('td');
+            until.textContent = b.expires
+                ? new Date(b.expires).toLocaleDateString('ru-RU')
+                : 'навсегда';
+            const users = document.createElement('td');
+            users.textContent = (b.users || []).join(', ') || '—';
+            const act = document.createElement('td');
+            const unban = document.createElement('button');
+            unban.type = 'button';
+            unban.className = 'admin-row-edit';
+            unban.textContent = 'Разбанить';
+            unban.addEventListener('click', async () => {
+                try {
+                    await api('/api/admin/unban', { method: 'POST', body: { ip: b.ip } });
+                    loadAdminBans();
+                    loadAdminUsers();
+                } catch (err) {
+                    adminError.textContent = err.message;
+                }
+            });
+            act.appendChild(unban);
+            tr.append(ip, reason, by, until, users, act);
+            bansEl.appendChild(tr);
         }
     }
 
@@ -409,29 +462,36 @@
     document.getElementById('admin-refresh').addEventListener('click', () => {
         loadAdminStats();
         loadAdminUsers();
+        loadAdminBans();
     });
 
     /* --- Редактирование игрока --- */
     const adminTabStats = document.getElementById('admin-tab-stats');
     const adminTabPass = document.getElementById('admin-tab-pass');
+    const adminTabBan = document.getElementById('admin-tab-ban');
     const adminTabDel = document.getElementById('admin-tab-del');
     const statsForm = document.getElementById('admin-stats-form');
     const passForm = document.getElementById('admin-pass-form');
+    const banBlock = document.getElementById('admin-ban-block');
     const delBlock = document.getElementById('admin-del-block');
 
     function showAdminTab(which) {
         adminTabStats.classList.toggle('active', which === 'stats');
         adminTabPass.classList.toggle('active', which === 'pass');
+        adminTabBan.classList.toggle('active', which === 'ban');
         adminTabDel.classList.toggle('active', which === 'del');
         statsForm.classList.toggle('hidden', which !== 'stats');
         passForm.classList.toggle('hidden', which !== 'pass');
+        banBlock.classList.toggle('hidden', which !== 'ban');
         delBlock.classList.toggle('hidden', which !== 'del');
         document.getElementById('edit-stats-error').textContent = '';
         document.getElementById('edit-pass-error').textContent = '';
+        document.getElementById('edit-ban-error').textContent = '';
         document.getElementById('edit-del-error').textContent = '';
     }
     adminTabStats.addEventListener('click', () => showAdminTab('stats'));
     adminTabPass.addEventListener('click', () => showAdminTab('pass'));
+    adminTabBan.addEventListener('click', () => showAdminTab('ban'));
     adminTabDel.addEventListener('click', () => showAdminTab('del'));
 
     function openAdminEdit(u) {
@@ -441,6 +501,12 @@
         document.getElementById('edit-games').value = u.games;
         document.getElementById('edit-kills').value = u.kills;
         document.getElementById('edit-pass').value = '';
+        document.getElementById('ban-ip-text').textContent =
+            u.ip ? 'IP игрока: ' + u.ip + (u.banned ? ' — уже заблокирован' : '')
+                 : 'IP ещё не сохранён — игрок не входил после обновления сервера';
+        document.getElementById('ban-reason').value = '';
+        document.getElementById('admin-ban-btn').classList.toggle('hidden', !!u.banned);
+        document.getElementById('admin-unban-btn').classList.toggle('hidden', !u.banned);
         showAdminTab('stats');
         adminEditModal.classList.remove('hidden');
     }
@@ -514,6 +580,55 @@
             errEl.textContent = err.message;
         } finally {
             busy = false; btn.disabled = false; btn.textContent = 'Удалить аккаунт';
+        }
+    });
+
+    document.getElementById('admin-ban-btn').addEventListener('click', async () => {
+        if (!adminTarget || busy) return;
+        const errEl = document.getElementById('edit-ban-error');
+        errEl.textContent = '';
+        if (!adminTarget.ip) { errEl.textContent = 'У игрока нет сохранённого IP'; return; }
+        const days = Number(document.getElementById('ban-days').value || 0);
+        const btn = document.getElementById('admin-ban-btn');
+        busy = true; btn.disabled = true; btn.textContent = 'Блокируем…';
+        try {
+            await api('/api/admin/ban', {
+                method: 'POST',
+                body: {
+                    ip: adminTarget.ip,
+                    reason: document.getElementById('ban-reason').value.trim(),
+                    days
+                }
+            });
+            adminTarget.banned = true;
+            btn.classList.add('hidden');
+            document.getElementById('admin-unban-btn').classList.remove('hidden');
+            loadAdminBans();
+            loadAdminUsers();
+        } catch (err) {
+            errEl.textContent = err.message;
+        } finally {
+            busy = false; btn.disabled = false; btn.textContent = 'Заблокировать IP';
+        }
+    });
+
+    document.getElementById('admin-unban-btn').addEventListener('click', async () => {
+        if (!adminTarget || busy) return;
+        const errEl = document.getElementById('edit-ban-error');
+        errEl.textContent = '';
+        const btn = document.getElementById('admin-unban-btn');
+        busy = true; btn.disabled = true;
+        try {
+            await api('/api/admin/unban', { method: 'POST', body: { ip: adminTarget.ip } });
+            adminTarget.banned = false;
+            btn.classList.add('hidden');
+            document.getElementById('admin-ban-btn').classList.remove('hidden');
+            loadAdminBans();
+            loadAdminUsers();
+        } catch (err) {
+            errEl.textContent = err.message;
+        } finally {
+            busy = false; btn.disabled = false;
         }
     });
 

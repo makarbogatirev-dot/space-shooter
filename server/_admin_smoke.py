@@ -81,6 +81,44 @@ def main():
         print("delete user:", call("POST", "/api/admin/delete-user",
                                    {"name": "Player1"}, token=at))
         print("users after delete:", call("GET", "/api/admin/users", token=at))
+
+        # --- Баны ---
+        # Регистрируем нового игрока с IP из X-Forwarded-For (эмуляция прокси).
+        def call_ip(method, path, body=None, ip=None):
+            data = json.dumps(body).encode() if body is not None else None
+            req = urllib.request.Request(BASE + path, data=data, method=method)
+            if data:
+                req.add_header("Content-Type", "application/json")
+            if ip:
+                req.add_header("X-Forwarded-For", ip)
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    return resp.status, json.loads(resp.read().decode())
+            except urllib.error.HTTPError as exc:
+                return exc.code, json.loads(exc.read().decode() or "{}")
+
+        st, p = call_ip("POST", "/api/register", {"name": "Victim", "password": "pass123"},
+                        ip="9.9.9.9")
+        print("register victim:", st, "ip seen:", p.get("user", {}).get("name"))
+        st, p = call("GET", "/api/admin/users?q=victim", token=at)
+        print("victim ip in list:", p["users"][0]["ip"], "banned:", p["users"][0]["banned"])
+        print("ban by name:", call("POST", "/api/admin/ban",
+                                   {"name": "Victim", "reason": "читы", "days": 7}, token=at))
+        print("ban dup:", call("POST", "/api/admin/ban", {"ip": "9.9.9.9"}, token=at))
+        print("bans list:", call("GET", "/api/admin/bans", token=at))
+        print("victim login while banned:", call_ip(
+            "POST", "/api/login", {"name": "Victim", "password": "pass123"}, ip="9.9.9.9"))
+        print("victim register from banned ip:", call_ip(
+            "POST", "/api/register", {"name": "Victim2", "password": "pass123"}, ip="9.9.9.9"))
+        st, p = call("GET", "/api/admin/users?q=victim", token=at)
+        print("victim banned flag:", p["users"][0]["banned"])
+        print("other ip ok:", call_ip(
+            "POST", "/api/login", {"name": "Victim", "password": "pass123"}, ip="8.8.8.8")[0])
+        print("unban:", call("POST", "/api/admin/unban", {"ip": "9.9.9.9"}, token=at))
+        print("unban missing:", call("POST", "/api/admin/unban", {"ip": "1.2.3.4"}, token=at))
+        print("victim login after unban:", call_ip(
+            "POST", "/api/login", {"name": "Victim", "password": "pass123"}, ip="9.9.9.9")[0])
+        print("ban as user:", call("POST", "/api/admin/ban", {"ip": "9.9.9.9"})[0])
     finally:
         srv.terminate()
         try:

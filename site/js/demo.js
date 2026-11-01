@@ -56,11 +56,11 @@
     }
 
     /* --- Game state --- */
-    let running = false, score = 0, god = false, raf = 0;
+    let running = false, score = 0, god = false, cheated = false, raf = 0;
     let player, meteors, lasers, lastShot, lastTs;
 
     function reset() {
-        score = 0; god = false;
+        score = 0; god = false; cheated = false;
         scoreEl.textContent = '0';
         godEl.classList.add('hidden');
         player = { x: W / 2, y: H - 45, w: 50, h: 50, speed: 480, r: 12 };
@@ -184,19 +184,23 @@
 
     function gameOver() {
         running = false;
-        // Гость — локальный рекорд, аккаунт — запись на сервере
-        if (score > best) {
-            best = score;
-            localStorage.setItem('ss_best', best);
-        }
-        if (window.__ss && window.__ss.getCurrent()) {
-            window.__ss.recordGame(score);
+        // Бессмертие (9) = чит: игра и очки не идут в зачёт ни гостю, ни на сервер.
+        if (!cheated) {
+            if (score > best) {
+                best = score;
+                localStorage.setItem('ss_best', best);
+            }
+            if (window.__ss && window.__ss.getCurrent()) {
+                window.__ss.recordGame(score);
+            }
         }
         refreshBest();
         document.dispatchEvent(new CustomEvent('ss:score', { detail: { score } }));
-        const shownBest = Math.max(currentBest(), score);
-        titleEl.textContent = 'Игра окончена';
-        textEl.innerHTML = `Счёт: <b>${score}</b> · Рекорд: <b>${shownBest}</b><br>Нажми «Играть», чтобы вернуться в бой`;
+        const shownBest = Math.max(currentBest(), cheated ? 0 : score);
+        titleEl.textContent = cheated ? 'Игра окончена (чит)' : 'Игра окончена';
+        textEl.innerHTML = cheated
+            ? `Счёт: <b>${score}</b> — с бессмертием рекорд не засчитывается<br>Нажми «Играть», чтобы вернуться в бой`
+            : `Счёт: <b>${score}</b> · Рекорд: <b>${shownBest}</b><br>Нажми «Играть», чтобы вернуться в бой`;
         startBtn.textContent = 'Играть снова';
         overlay.classList.remove('hidden');
         if (document.fullscreenElement) document.exitFullscreen();
@@ -211,6 +215,7 @@
         keys[e.code] = true;
         if (running && e.code === 'Digit9') {           // God mode, like the original
             god = true;
+            cheated = true;   // рекорд за эту игру не засчитывается
             godEl.classList.remove('hidden');
         }
         if (running && e.code === 'Digit0') {
