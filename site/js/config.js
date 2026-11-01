@@ -9,4 +9,4 @@
    отдельно (Render/Railway/VPS), впишите его адрес:
        window.SS_API_BASE = 'https://space-shooter-accounts.onrender.com';
    ============================================ */
-window.SS_API_BASE = '';
+window.SS_API_BASE = 'https://space-shooter-accounts.onrender.com';
