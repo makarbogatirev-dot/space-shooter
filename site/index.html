@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Space Shooter — Космический Шутер</title>
+    <link rel="icon" type="image/x-icon" href="assets/img/favicon.ico">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- Звёздный фон -->
+    <div class="stars"></div>
+    <div class="stars2"></div>
+    <div class="stars3"></div>
+
+    <!-- Навигация -->
+    <nav class="navbar">
+        <div class="nav-container">
+            <a href="#" class="logo">
+                <span class="logo-icon">🚀</span> Space Shooter
+            </a>
+            <ul class="nav-menu">
+                <li><a href="#hero">Главная</a></li>
+                <li><a href="#features">Особенности</a></li>
+                <li><a href="#screenshots">Скриншоты</a></li>
+                <li><a href="#howto">Как играть</a></li>
+                <li><a href="#demo">Демо</a></li>
+                <li><button class="profile-btn" id="profile-btn" type="button">👤 Войти</button></li>
+                <li><a href="#download" class="nav-btn">Скачать</a></li>
+            </ul>
+            <button class="hamburger" aria-label="Меню">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Герой-секция -->
+    <section id="hero" class="hero">
+        <div class="hero-content">
+            <h1 class="hero-title">
+                <span class="glow">Space</span> Shooter
+            </h1>
+            <p class="hero-subtitle">Уничтожь метеориты и спаси галактику!</p>
+            <div class="hero-actions">
+                <a href="#download" class="btn btn-primary">Скачать игру</a>
+                <a href="#howto" class="btn btn-secondary">Как играть</a>
+            </div>
+            <div class="hero-image">
+                <img src="assets/img/player.png" alt="Корабль игрока" class="player-ship">
+            </div>
+        </div>
+        <div class="scroll-indicator">
+            <span></span>
+        </div>
+    </section>
+
+    <!-- Особенности -->
+    <section id="features" class="features">
+        <h2 class="section-title">Особенности игры</h2>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-icon">🌠</div>
+                <h3>20 метеоритов</h3>
+                <p>20 видов астероидов вращаются и летят с разной скоростью, создавая невероятный вызов</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🔫</div>
+                <h3>Лазерное оружие</h3>
+                <p>Скорострельный лазер (1 выстрел каждые 100 мс) уничтожает метеориты одним попаданием</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">⚡</div>
+                <h3>Плавное управление</h3>
+                <p>Удобное управление клавишами WASD или стрелками для максимального комфорта</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🎯</div>
+                <h3>Система очков</h3>
+                <p>Сражайся за лучший результат и соревнуйся с друзьями</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🛡️</div>
+                <h3>Режим Бога</h3>
+                <p>Нажми 9 для чит-режима и стань неуязвимым — исследуй и наслаждайся полётом</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-icon">🌀</div>
+                <h3>Вращение врагов</h3>
+                <p>Метеориты вращаются в реальном времени, создавая динамичный визуальный ряд</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Скриншоты -->
+    <section id="screenshots" class="screenshots">
+        <h2 class="section-title">Скриншоты</h2>
+        <div class="screenshots-grid screenshots-grid-wide">
+            <div class="screenshot-item screenshot-wide">
+                <img src="assets/screenshots/hero.png" alt="Скриншот игры — два кара боя" loading="lazy">
+                <div class="screenshot-overlay">Космический бой</div>
+            </div>
+            <div class="screenshot-item">
+                <img src="assets/screenshots/gameplay1.png" alt="Скриншот игры — отстрел метеоритов" loading="lazy">
+                <div class="screenshot-overlay">Отстрел метеоритов</div>
+            </div>
+            <div class="screenshot-item">
+                <img src="assets/screenshots/gameplay2.png" alt="Скриншот игры — метеоритный дождь" loading="lazy">
+                <div class="screenshot-overlay">Метеоритный дождь</div>
+            </div>
+            <div class="screenshot-item">
+                <img src="assets/screenshots/gameplay3.png" alt="Скриншот игры — уклонение" loading="lazy">
+                <div class="screenshot-overlay">На волоске</div>
+            </div>
+        </div>
+
+        <h3 class="sub-title">Все 20 метеоритов</h3>
+        <div class="meteor-grid">
+            <div class="meteor-cell"><img src="assets/img/meteors/1.png" alt="Метеорит 1" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/2.png" alt="Метеорит 2" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/3.png" alt="Метеорит 3" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/4.png" alt="Метеорит 4" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/5.png" alt="Метеорит 5" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/6.png" alt="Метеорит 6" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/7.png" alt="Метеорит 7" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/8.png" alt="Метеорит 8" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/9.png" alt="Метеорит 9" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/10.png" alt="Метеорит 10" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/11.png" alt="Метеорит 11" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/12.png" alt="Метеорит 12" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/13.png" alt="Метеорит 13" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/14.png" alt="Метеорит 14" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/15.png" alt="Метеорит 15" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/16.png" alt="Метеорит 16" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/17.png" alt="Метеорит 17" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/18.png" alt="Метеорит 18" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/19.png" alt="Метеорит 19" loading="lazy"></div>
+            <div class="meteor-cell"><img src="assets/img/meteors/20.png" alt="Метеорит 20" loading="lazy"></div>
+        </div>
+
+        <h3 class="sub-title">Лазер</h3>
+        <div class="laser-showcase">
+            <div class="laser-cell">
+                <img src="assets/img/laser/laserRed07.png" alt="Лазерный снаряд" loading="lazy">
+                <span>Основной лазерный снаряд</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- Как играть -->
+    <section id="howto" class="howto">
+        <h2 class="section-title">Как играть</h2>
+        <div class="howto-container">
+            <div class="howto-steps">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h3>Управление кораблём</h3>
+                        <p>Используй <kbd>←</kbd> <kbd>→</kbd> или <kbd>A</kbd> <kbd>D</kbd> для перемещения корабля влево и вправо</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h3>Стрельба</h3>
+                        <p>Нажми <kbd>Пробел</kbd> для выстрела лазерным снарядом по метеоритам</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h3>Уничтожай врагов</h3>
+                        <p>Попадай по метеоритам, чтобы набирать очки. Каждый уничтоженный враг — +1 очко</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div class="step-content">
+                        <h3>Избегай столкновений</h3>
+                        <p>Если метеорит коснётся твоего корабля — игра окончена. Уклоняйся!</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <div class="step-number">5</div>
+                    <div class="step-content">
+                        <h3>Секретный чит-код</h3>
+                        <p>Нажми <kbd>9</kbd> для активации режима Бога (неуязвимость). <kbd>0</kbd> — чтобы отключить</p>
+                    </div>
+                </div>
+            </div>
+            <div class="howto-controls">
+                <div class="controls-card">
+                    <h3>⌨️ Управление</h3>
+                    <div class="controls-list">
+                        <div class="control-item">
+                            <kbd>←</kbd> <kbd>→</kbd>
+                            <span>Движение</span>
+                        </div>
+                        <div class="control-item">
+                            <kbd>A</kbd> <kbd>D</kbd>
+                            <span>Движение</span>
+                        </div>
+                        <div class="control-item">
+                            <kbd>Пробел</kbd>
+                            <span>Стрельба</span>
+                        </div>
+                        <div class="control-item">
+                            <kbd>9</kbd>
+                            <span>Режим Бога</span>
+                        </div>
+                        <div class="control-item">
+                            <kbd>0</kbd>
+                            <span>Откл. режима Бога</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Демо-версия -->
+    <section id="demo" class="demo">
+        <h2 class="section-title">Попробуй прямо здесь</h2>
+        <p class="demo-lead">Мини-версия игры прямо в браузере — те же спрайты, то же управление.</p>
+        <div class="demo-frame" id="demo-frame">
+            <canvas id="game" width="600" height="800">Ваш браузер не поддерживает canvas.</canvas>
+            <button id="fullscreen-btn" class="fullscreen-btn" type="button" title="На весь экран" aria-label="Полноэкранный режим">⛶</button>
+            <div id="overlay" class="demo-overlay">
+                <div class="overlay-inner">
+                    <div class="overlay-ship">🚀</div>
+                    <h3 id="overlay-title">Space Shooter</h3>
+                    <p id="overlay-text">← → или A/D — движение<br>Пробел — огонь<br>Esc — выйти из полного экрана<br><span class="overlay-cheat">Секрет: клавиша 9</span></p>
+                    <button id="start-btn" class="btn btn-primary">Играть</button>
+                </div>
+            </div>
+        </div>
+        <div class="demo-hud">
+            <div class="hud-item"><span class="hud-label">Счёт</span><span id="hud-score" class="hud-value">0</span></div>
+            <div class="hud-item"><span class="hud-label">Рекорд</span><span id="hud-best" class="hud-value">0</span></div>
+            <div class="hud-item" id="hud-player"><span class="hud-label">Игрок</span><span id="hud-name" class="hud-value">Гость</span></div>
+            <div class="hud-item hud-god hidden" id="hud-god"><span class="hud-value">🛡 GOD MODE</span></div>
+        </div>
+        <p class="demo-note">Прогресс сохраняется в этом браузере. Полная версия — с установщиком и без ограничений.</p>
+
+        <div class="leaderboard-wrap">
+            <h3 class="sub-title sub-title-center">🏆 Таблица лидеров</h3>
+            <div class="leaderboard">
+                <div class="lb-header">
+                    <span>#</span><span>Игрок</span><span>Рекорд</span>
+                </div>
+                <div id="lb-body" class="lb-body"></div>
+                <p id="lb-empty" class="lb-empty">Пока нет рекордов. Стань первым!</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Скачать -->
+    <section id="download" class="download">
+        <div class="download-content">
+            <h2 class="section-title">Готов спасти галактику?</h2>
+            <p class="download-text">Скачай Space Shooter и начни своё космическое приключение прямо сейчас!</p>
+            <div class="download-actions">
+                <a href="download/SpaceShooter_Setup_v1.0.exe" class="btn btn-primary btn-large" download>
+                    <span class="btn-icon">⬇</span> Скачать установщик
+                </a>
+            </div>
+            <div class="download-alt">
+                <span class="alt-label">Уже есть игра?</span>
+                <a href="download/SpaceShooter_v1.0.exe" download class="alt-link">Portable-версия — запустить без установки</a>
+            </div>
+            <div class="download-alt">
+                <span class="alt-label">Для разработчиков:</span>
+                <a href="../space_shuter%20v1.0/space_shuter.py" download class="alt-link">скачать исходный код (.py)</a>
+            </div>
+            <p class="download-hint">Версия 1.0 • 30.5 МБ • Windows 10/11 x64 • Бесплатно</p>
+        </div>
+    </section>
+
+    <!-- Модалка аккаунта -->
+    <div id="auth-modal" class="modal hidden">
+        <div class="modal-backdrop" data-close></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+            <button class="modal-close" data-close type="button" aria-label="Закрыть">✕</button>
+
+            <!-- Экран: вход / регистрация -->
+            <div id="auth-forms">
+                <div class="auth-tabs">
+                    <button id="tab-login" class="auth-tab active" type="button">Вход</button>
+                    <button id="tab-register" class="auth-tab" type="button">Регистрация</button>
+                </div>
+
+                <form id="login-form" class="auth-form" autocomplete="on">
+                    <label class="field">
+                        <span>Никнейм</span>
+                        <input type="text" id="login-name" placeholder="Например, Nova" maxlength="20" required>
+                    </label>
+                    <label class="field">
+                        <span>Пароль</span>
+                        <input type="password" id="login-pass" placeholder="••••••••" required>
+                    </label>
+                    <p id="login-error" class="form-error"></p>
+                    <button type="submit" class="btn btn-primary btn-block">Войти</button>
+                </form>
+
+                <form id="register-form" class="auth-form hidden" autocomplete="on">
+                    <label class="field">
+                        <span>Никнейм</span>
+                        <input type="text" id="reg-name" placeholder="Придумай ник (3–20 символов)" minlength="3" maxlength="20" required>
+                    </label>
+                    <label class="field">
+                        <span>Пароль</span>
+                        <input type="password" id="reg-pass" placeholder="Минимум 6 символов" minlength="6" required>
+                    </label>
+                    <label class="field">
+                        <span>Повтор пароля</span>
+                        <input type="password" id="reg-pass2" placeholder="Ещё раз" required>
+                    </label>
+                    <p id="reg-error" class="form-error"></p>
+                    <button type="submit" class="btn btn-primary btn-block">Создать аккаунт</button>
+                </form>
+            </div>
+
+            <!-- Экран: профиль -->
+            <div id="auth-profile" class="hidden">
+                <div class="profile-head">
+                    <div id="profile-avatar" class="profile-avatar">N</div>
+                    <div>
+                        <h3 id="profile-name" class="profile-name">Nova</h3>
+                        <p id="profile-since" class="profile-since"></p>
+                    </div>
+                </div>
+                <div class="profile-stats">
+                    <div class="stat"><span class="stat-value" id="stat-best">0</span><span class="stat-label">Рекорд</span></div>
+                    <div class="stat"><span class="stat-value" id="stat-games">0</span><span class="stat-label">Игр сыграно</span></div>
+                    <div class="stat"><span class="stat-value" id="stat-kills">0</span><span class="stat-label">Метеоритов</span></div>
+                </div>
+                <p id="profile-rank" class="profile-rank"></p>
+                <div class="profile-actions">
+                    <button id="logout-btn" class="btn btn-secondary" type="button">Выйти</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Футер -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-logo">🚀 Space Shooter</div>
+            <p class="footer-text">Космический шутер на Python с использованием Pygame</p>
+            <p class="footer-copy">&copy; 2026 Space Shooter. Все права защищены.</p>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+    <script src="js/auth.js"></script>
+    <script src="js/demo.js"></script>
+</body>
+</html>
