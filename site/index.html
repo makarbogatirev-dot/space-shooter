@@ -241,7 +241,7 @@
             <div class="hud-item" id="hud-player"><span class="hud-label">Игрок</span><span id="hud-name" class="hud-value">Гость</span></div>
             <div class="hud-item hud-god hidden" id="hud-god"><span class="hud-value">🛡 GOD MODE</span></div>
         </div>
-        <p class="demo-note">Прогресс сохраняется в этом браузере. Полная версия — с установщиком и без ограничений.</p>
+        <p class="demo-note">С аккаунтом рекорд и статистика сохраняются на сервере и доступны с любого устройства. Без входа рекорд остаётся только в этом браузере.</p>
 
         <div class="leaderboard-wrap">
             <h3 class="sub-title sub-title-center">🏆 Таблица лидеров</h3>
@@ -250,7 +250,7 @@
                     <span>#</span><span>Игрок</span><span>Рекорд</span>
                 </div>
                 <div id="lb-body" class="lb-body"></div>
-                <p id="lb-empty" class="lb-empty">Пока нет рекордов. Стань первым!</p>
+                <p id="lb-empty" class="lb-empty">Загружаем таблицу лидеров…</p>
             </div>
         </div>
     </section>
@@ -267,11 +267,11 @@
             </div>
             <div class="download-alt">
                 <span class="alt-label">Уже есть игра?</span>
-                <a href="https://github.com/makarbogatirev-dot/space-shooter/releases/download/v1.0/SpaceShooter_v1.0.exe" class="alt-link">Portable-версия — запустить без установки</a>
+                <a href="https://github.com/makarbogatirev-dot/space-shooter/releases/download/v1.0/SpaceShooter.exe" class="alt-link">Portable-версия — запустить без установки</a>
             </div>
             <div class="download-alt">
                 <span class="alt-label">Для разработчиков:</span>
-                <a href="../space_shuter%20v1.0/space_shuter.py" download class="alt-link">скачать исходный код (.py)</a>
+                <a href="download/space_shuter.py" download class="alt-link">скачать исходный код (.py)</a>
             </div>
             <p class="download-hint">Версия 1.0 • 30.5 МБ • Windows 10/11 x64 • Бесплатно</p>
         </div>
@@ -319,6 +319,8 @@
                     <p id="reg-error" class="form-error"></p>
                     <button type="submit" class="btn btn-primary btn-block">Создать аккаунт</button>
                 </form>
+
+                <p class="auth-note">🔒 Пароль хэшируется на сервере (PBKDF2-SHA256) и не хранится в открытом виде. Аккаунт работает на любом устройстве.</p>
             </div>
 
             <!-- Экран: профиль -->
@@ -352,6 +354,7 @@
         </div>
     </footer>
 
+    <script src="js/config.js"></script>
     <script src="js/main.js"></script>
     <script src="js/auth.js"></script>
     <script src="js/demo.js"></script>

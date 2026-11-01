@@ -1,33 +1,28 @@
 /* ============================================
-   SPACE SHOOTER — Account System
-   Registration, login, profile, leaderboard
-   All data stored in localStorage (no server)
+   SPACE SHOOTER — Account System (server-backed)
+   Регистрация, вход, профиль и таблица лидеров
+   работают через API сервера аккаунтов.
+   Пароли хэшируются на сервере (PBKDF2-SHA256).
    ============================================ */
 (() => {
     'use strict';
 
-    /* --- Storage helpers --- */
-    const DB_KEY = 'ss_accounts';
-    const STATS_KEY = 'ss_stats';
+    /* --- Адрес API ---
+       Если сайт открыт с сервера аккаунтов — используем тот же origin.
+       Для статического хостинга задайте window.SS_API_BASE до подключения auth.js. */
+    const API_BASE = (window.SS_API_BASE !== undefined
+        ? String(window.SS_API_BASE)
+        : (location.protocol === 'file:' ? 'http://127.0.0.1:8735' : '')
+    ).replace(/\/+$/, '');
 
-    function loadAccounts() {
-        try { return JSON.parse(localStorage.getItem(DB_KEY)) || {}; } catch { return {}; }
-    }
-    function saveAccounts(acc) {
-        localStorage.setItem(DB_KEY, JSON.stringify(acc));
-    }
+    const TOKEN_KEY = 'ss_token';
 
-    /* --- Simple hash (not crypto, but enough for this) --- */
-    function hash(str) {
-        let h = 0;
-        for (let i = 0; i < str.length; i++) {
-            h = ((h << 5) - h) + str.charCodeAt(i);
-            h |= 0;
-        }
-        return 'h' + Math.abs(h).toString(36);
-    }
+    /* --- Состояние --- */
+    let user = null;      // { name, created, best, games, kills, rank, total }
+    let token = localStorage.getItem(TOKEN_KEY) || '';
+    let busy = false;
 
-    /* --- UI elements --- */
+    /* --- UI элементы --- */
     const profileBtn = document.getElementById('profile-btn');
     const modal = document.getElementById('auth-modal');
     const formsEl = document.getElementById('auth-forms');
@@ -39,39 +34,53 @@
     const loginError = document.getElementById('login-error');
     const regError = document.getElementById('reg-error');
 
-    /* --- Current session --- */
-    let currentSession = null; // { name, created }
+    /* --- Сетевой слой --- */
+    async function api(path, { method = 'GET', body, auth = true } = {}) {
+        const headers = {};
+        if (body !== undefined) headers['Content-Type'] = 'application/json';
+        if (auth && token) headers['Authorization'] = 'Bearer ' + token;
 
-    function getSession() {
-        try { return JSON.parse(sessionStorage.getItem('ss_session')); } catch { return null; }
-    }
-    function saveSession(s) {
-        sessionStorage.setItem('ss_session', JSON.stringify(s));
-    }
-    function clearSession() {
-        sessionStorage.removeItem('ss_session');
-        currentSession = null;
+        let res;
+        try {
+            res = await fetch(API_BASE + path, {
+                method,
+                headers,
+                body: body === undefined ? undefined : JSON.stringify(body)
+            });
+        } catch {
+            throw new Error('Сервер аккаунтов недоступен');
+        }
+
+        let data = {};
+        let isJson = false;
+        try {
+            data = await res.json();
+            isJson = true;
+        } catch { /* пустой или не-JSON ответ */ }
+
+        if (!res.ok) {
+            if (res.status === 401 && auth && token) clearToken();
+            if (!isJson && (res.status === 404 || res.status === 405)) {
+                // Статический хостинг (GitHub Pages) отвечает HTML-страницей 404.
+                throw new Error('Сервер аккаунтов не подключён — укажите адрес API в js/config.js');
+            }
+            throw new Error(data.error || 'Ошибка сервера (' + res.status + ')');
+        }
+        return data;
     }
 
-    /* --- Stats storage --- */
-    function loadStats() {
-        try { return JSON.parse(localStorage.getItem(STATS_KEY)) || {}; } catch { return {}; }
-    }
-    function saveStats(st) {
-        localStorage.setItem(STATS_KEY, JSON.stringify(st));
-    }
-    function recordGame(score) {
-        if (!currentSession) return;
-        const st = loadStats();
-        const u = st[currentSession.name] || { best: 0, games: 0, kills: 0 };
-        u.best = Math.max(u.best, score);
-        u.games++;
-        u.kills += score;
-        st[currentSession.name] = u;
-        saveStats(st);
+    function clearToken() {
+        token = '';
+        localStorage.removeItem(TOKEN_KEY);
     }
 
-    /* --- Open / close modal --- */
+    function setToken(t) {
+        token = t || '';
+        if (token) localStorage.setItem(TOKEN_KEY, token);
+        else localStorage.removeItem(TOKEN_KEY);
+    }
+
+    /* --- Модалка --- */
     function openModal() {
         modal.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
@@ -82,37 +91,26 @@
         document.body.style.overflow = '';
     }
 
-    /* --- Refresh UI based on session --- */
+    /* --- Отрисовка --- */
     function refreshUI() {
-        const session = getSession();
-        const accounts = loadAccounts();
-        const btn = profileBtn;
-
-        if (session && accounts[session.name]) {
-            btn.textContent = '👤 ' + session.name;
-            btn.setAttribute('data-logged', '1');
-            currentSession = session;
+        if (user) {
+            profileBtn.textContent = '👤 ' + user.name;
+            profileBtn.setAttribute('data-logged', '1');
             formsEl.classList.add('hidden');
             profileEl.classList.remove('hidden');
-            document.getElementById('profile-name').textContent = session.name;
-            document.getElementById('profile-avatar').textContent = session.name[0].toUpperCase();
-            document.getElementById('profile-since').textContent = 'С ' + new Date(accounts[session.name].created).toLocaleDateString('ru-RU');
 
-            const st = loadStats();
-            const u = st[session.name] || { best: 0, games: 0, kills: 0 };
-            document.getElementById('stat-best').textContent = u.best;
-            document.getElementById('stat-games').textContent = u.games;
-            document.getElementById('stat-kills').textContent = u.kills;
-
-            // rank
-            const all = Object.entries(st).map(([n, s]) => ({ name: n, best: s.best }));
-            all.sort((a, b) => b.best - a.best);
-            const rank = all.findIndex(x => x.name === session.name) + 1;
-            document.getElementById('profile-rank').textContent = rank ? `Ранг: #${rank} из ${all.length}` : '';
+            document.getElementById('profile-name').textContent = user.name;
+            document.getElementById('profile-avatar').textContent = user.name[0].toUpperCase();
+            document.getElementById('profile-since').textContent =
+                'С ' + new Date(user.created).toLocaleDateString('ru-RU');
+            document.getElementById('stat-best').textContent = user.best;
+            document.getElementById('stat-games').textContent = user.games;
+            document.getElementById('stat-kills').textContent = user.kills;
+            document.getElementById('profile-rank').textContent =
+                user.rank && user.total ? `Ранг: #${user.rank} из ${user.total}` : '';
         } else {
-            btn.textContent = '👤 Войти';
-            btn.removeAttribute('data-logged');
-            currentSession = null;
+            profileBtn.textContent = '👤 Войти';
+            profileBtn.removeAttribute('data-logged');
             formsEl.classList.remove('hidden');
             profileEl.classList.add('hidden');
             loginForm.classList.remove('hidden');
@@ -123,48 +121,58 @@
             regError.textContent = '';
         }
 
-        updateLeaderboard();
         updateHUD();
+        document.dispatchEvent(new CustomEvent('ss:auth', { detail: { user } }));
     }
 
-    /* --- Leaderboard --- */
-    function updateLeaderboard() {
-        const st = loadStats();
+    function updateHUD() {
+        const nameEl = document.getElementById('hud-name');
+        if (nameEl) nameEl.textContent = user ? user.name : 'Гость';
+        const bestEl = document.getElementById('hud-best');
+        if (bestEl) bestEl.textContent = user ? user.best : (localStorage.getItem('ss_best') || 0);
+    }
+
+    /* --- Таблица лидеров --- */
+    async function updateLeaderboard() {
         const body = document.getElementById('lb-body');
         const empty = document.getElementById('lb-empty');
-        const entries = Object.entries(st)
-            .map(([n, s]) => ({ name: n, best: s.best }))
-            .sort((a, b) => b.best - a.best)
-            .slice(0, 10);
+        if (!body) return;
+
+        let entries = [];
+        try {
+            const data = await api('/api/leaderboard?limit=10', { auth: false });
+            entries = data.entries || [];
+        } catch (err) {
+            body.innerHTML = '';
+            empty.style.display = '';
+            empty.textContent = err.message;
+            return;
+        }
 
         body.innerHTML = '';
         if (entries.length === 0) {
             empty.style.display = '';
+            empty.textContent = 'Пока нет рекордов. Стань первым!';
             return;
         }
         empty.style.display = 'none';
 
         const medals = ['🥇', '🥈', '🥉'];
         entries.forEach((e, i) => {
-            const tr = document.createElement('div');
-            tr.className = 'lb-row' + (currentSession && currentSession.name === e.name ? ' lb-row-current' : '');
-            tr.innerHTML = `<span>${i < 3 ? medals[i] : (i + 1)}</span><span>${esc(e.name)}</span><span>${e.best}</span>`;
-            body.appendChild(tr);
+            const row = document.createElement('div');
+            row.className = 'lb-row' + (user && user.name === e.name ? ' lb-row-current' : '');
+            const place = document.createElement('span');
+            place.textContent = i < 3 ? medals[i] : String(i + 1);
+            const nick = document.createElement('span');
+            nick.textContent = e.name;
+            const score = document.createElement('span');
+            score.textContent = e.best;
+            row.append(place, nick, score);
+            body.appendChild(row);
         });
     }
 
-    function updateHUD() {
-        const nameEl = document.getElementById('hud-name');
-        if (nameEl) nameEl.textContent = currentSession ? currentSession.name : 'Гость';
-    }
-
-    function esc(s) {
-        const d = document.createElement('div');
-        d.textContent = s;
-        return d.innerHTML;
-    }
-
-    /* --- Tabs --- */
+    /* --- Вкладки --- */
     tabLogin.addEventListener('click', () => {
         tabLogin.classList.add('active');
         tabReg.classList.remove('active');
@@ -180,84 +188,125 @@
         regError.textContent = '';
     });
 
-    /* --- Login --- */
-    loginForm.addEventListener('submit', e => {
+    /* --- Вход --- */
+    loginForm.addEventListener('submit', async e => {
         e.preventDefault();
+        if (busy) return;
         const name = document.getElementById('login-name').value.trim();
         const pass = document.getElementById('login-pass').value;
         loginError.textContent = '';
-
         if (!name || !pass) { loginError.textContent = 'Заполни все поля'; return; }
 
-        const accounts = loadAccounts();
-        if (!accounts[name]) { loginError.textContent = 'Аккаунт не найден'; return; }
-        if (hash(pass) !== accounts[name].pass) { loginError.textContent = 'Неверный пароль'; return; }
-
-        saveSession({ name, created: accounts[name].created });
-        closeModal();
+        const btn = loginForm.querySelector('button[type=submit]');
+        busy = true; btn.disabled = true; btn.textContent = 'Входим…';
+        try {
+            const data = await api('/api/login', {
+                method: 'POST', body: { name, password: pass }, auth: false
+            });
+            setToken(data.token);
+            user = data.user;
+            loginForm.reset();
+            closeModal();
+            refreshUI();
+            updateLeaderboard();
+        } catch (err) {
+            loginError.textContent = err.message;
+        } finally {
+            busy = false; btn.disabled = false; btn.textContent = 'Войти';
+        }
     });
 
-    /* --- Register --- */
-    regForm.addEventListener('submit', e => {
+    /* --- Регистрация --- */
+    regForm.addEventListener('submit', async e => {
         e.preventDefault();
+        if (busy) return;
         const name = document.getElementById('reg-name').value.trim();
         const pass = document.getElementById('reg-pass').value;
         const pass2 = document.getElementById('reg-pass2').value;
         regError.textContent = '';
 
         if (name.length < 3 || name.length > 20) { regError.textContent = 'Ник: 3–20 символов'; return; }
+        if (!/^[a-zA-Zа-яА-ЯёЁ0-9_]+$/.test(name)) { regError.textContent = 'Только буквы, цифры и _'; return; }
         if (pass.length < 6) { regError.textContent = 'Пароль: минимум 6 символов'; return; }
         if (pass !== pass2) { regError.textContent = 'Пароли не совпадают'; return; }
-        if (!/^[a-zA-Zа-яА-ЯёЁ0-9_]+$/.test(name)) { regError.textContent = 'Только буквы, цифры и _'; return; }
 
-        const accounts = loadAccounts();
-        if (accounts[name]) { regError.textContent = 'Этот ник уже занят'; return; }
-
-        accounts[name] = { pass: hash(pass), created: Date.now() };
-        saveAccounts(accounts);
-
-        saveSession({ name, created: accounts[name].created });
-        closeModal();
-    });
-
-    /* --- Logout --- */
-    document.getElementById('logout-btn').addEventListener('click', () => {
-        clearSession();
-        refreshUI();
-    });
-
-    /* --- Close modal --- */
-    modal.querySelectorAll('[data-close]').forEach(el => {
-        el.addEventListener('click', closeModal);
-    });
-    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
-    document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal(); });
-
-    /* --- Profile button --- */
-    profileBtn.addEventListener('click', () => {
-        if (profileBtn.getAttribute('data-logged') === '1') {
-            // Already logged in — open modal to profile
+        const btn = regForm.querySelector('button[type=submit]');
+        busy = true; btn.disabled = true; btn.textContent = 'Создаём…';
+        try {
+            const data = await api('/api/register', {
+                method: 'POST', body: { name, password: pass }, auth: false
+            });
+            setToken(data.token);
+            user = data.user;
+            regForm.reset();
+            closeModal();
             refreshUI();
-            openModal();
-        } else {
-            openModal();
+            updateLeaderboard();
+        } catch (err) {
+            regError.textContent = err.message;
+        } finally {
+            busy = false; btn.disabled = false; btn.textContent = 'Создать аккаунт';
         }
     });
 
-    /* --- Init --- */
-    refreshUI();
-
-    /* --- Expose for demo.js --- */
-    window.__ss = {
-        getCurrent: () => currentSession,
-        recordGame,
-        getSession,
-        refreshUI,
-        updateLeaderboard
-    };
-
-    /* --- Listen for game-over events --- */
-    document.addEventListener('ss:score', e => {
-        updateLeaderboard();
+    /* --- Выход --- */
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+        const t = token;
+        clearToken();
+        user = null;
+        refreshUI();
+        if (t) {
+            try {
+                await fetch(API_BASE + '/api/logout', {
+                    method: 'POST', headers: { Authorization: 'Bearer ' + t }
+                });
+            } catch { /* сессия истечёт сама */ }
+        }
     });
+
+    /* --- Закрытие модалки --- */
+    modal.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', closeModal));
+    modal.addEventListener('click', e => { if (e.target === modal) closeModal(); });
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape' && !modal.classList.contains('hidden')) closeModal();
+    });
+
+    profileBtn.addEventListener('click', openModal);
+
+    /* --- Запись очков --- */
+    async function recordGame(score) {
+        if (!user) return;
+        try {
+            const data = await api('/api/score', { method: 'POST', body: { score } });
+            user = data.user;
+            refreshUI();
+            updateLeaderboard();
+        } catch (err) {
+            console.warn('Не удалось сохранить очки:', err.message);
+        }
+    }
+
+    /* --- Инициализация --- */
+    (async function init() {
+        if (token) {
+            try {
+                const data = await api('/api/me');
+                user = data.user;
+            } catch {
+                clearToken();
+                user = null;
+            }
+        }
+        refreshUI();
+        updateLeaderboard();
+    })();
+
+    /* --- Для demo.js --- */
+    window.__ss = {
+        getCurrent: () => user,
+        recordGame,
+        refreshUI,
+        updateLeaderboard,
+        apiBase: API_BASE
+    };
 })();

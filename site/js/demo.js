@@ -20,23 +20,18 @@
 
     const IMG = 'assets/img/';
     const keys = {};
-    // Local best (guest); account best shown when logged in via __ss
+    // Гость — рекорд в этом браузере; с аккаунтом — рекорд с сервера
     let best = +(localStorage.getItem('ss_best') || 0);
     bestEl.textContent = best;
 
     function currentBest() {
         const ss = window.__ss;
-        if (ss && ss.getCurrent()) {
-            try {
-                const st = JSON.parse(localStorage.getItem('ss_stats')) || {};
-                const u = st[ss.getCurrent().name];
-                if (u) return u.best;
-            } catch {}
-        }
-        return best;
+        const me = ss && ss.getCurrent();
+        return me ? me.best : best;
     }
     function refreshBest() { bestEl.textContent = currentBest(); }
     refreshBest();
+    document.addEventListener('ss:auth', refreshBest);
 
     /* --- Assets --- */
     const assets = { bg: null, player: null, laser: null, meteors: [] };
@@ -189,17 +184,19 @@
 
     function gameOver() {
         running = false;
-        // Record to account (if logged in) or local best (guest)
-        if (window.__ss && window.__ss.getCurrent()) {
-            window.__ss.recordGame(score);
-        } else if (score > best) {
+        // Гость — локальный рекорд, аккаунт — запись на сервере
+        if (score > best) {
             best = score;
             localStorage.setItem('ss_best', best);
         }
+        if (window.__ss && window.__ss.getCurrent()) {
+            window.__ss.recordGame(score);
+        }
         refreshBest();
         document.dispatchEvent(new CustomEvent('ss:score', { detail: { score } }));
+        const shownBest = Math.max(currentBest(), score);
         titleEl.textContent = 'Игра окончена';
-        textEl.innerHTML = `Счёт: <b>${score}</b> · Рекорд: <b>${currentBest()}</b><br>Нажми «Играть», чтобы вернуться в бой`;
+        textEl.innerHTML = `Счёт: <b>${score}</b> · Рекорд: <b>${shownBest}</b><br>Нажми «Играть», чтобы вернуться в бой`;
         startBtn.textContent = 'Играть снова';
         overlay.classList.remove('hidden');
         if (document.fullscreenElement) document.exitFullscreen();

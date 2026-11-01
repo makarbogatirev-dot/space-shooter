@@ -1,0 +1,18 @@
+# Деплой сервера аккаунтов на Render.
+# Внимание: на бесплатном тарифе файловая система временная — база обнулится
+# при переразвёртывании. Для постоянного хранения подключите диск (платный план)
+# или разместите сервер на VPS, указав DB_PATH на постоянном разделе.
+services:
+  - type: web
+    name: space-shooter-accounts
+    runtime: python
+    plan: free
+    buildCommand: "echo 'stdlib only - build not required'"
+    startCommand: "python server/app.py"
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: DB_PATH
+        value: /opt/render/project/src/server/data/accounts.db

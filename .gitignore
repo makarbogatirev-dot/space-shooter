@@ -1,0 +1,14 @@
+# База данных аккаунтов (создаётся автоматически)
+server/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Служебные файлы
+server/_log.txt
+__pycache__/
+*.pyc
+
+# Сборка игры
+space_shuter v1.0/build/
+space_shuter v1.0/dist/
