@@ -16,6 +16,14 @@
     ).replace(/\/+$/, '');
 
     const TOKEN_KEY = 'ss_token';
+    const CONSENT_KEY = 'ss_cookie_consent';
+
+    /* Согласие на куки: без него fetch не отправляет credentials, и браузер
+       не сохраняет сессионную куку. Вход всё равно работает через заголовок
+       Authorization и токен в localStorage. */
+    function consentGranted() {
+        return localStorage.getItem(CONSENT_KEY) === 'granted';
+    }
 
     /* --- Состояние --- */
     let user = null;      // { name, created, best, games, kills, rank, total }
@@ -60,7 +68,7 @@
             res = await fetch(API_BASE + path, {
                 method,
                 headers,
-                credentials: 'include',   // сервер ставит HttpOnly-куку сессии
+                credentials: consentGranted() ? 'include' : 'omit',
                 body: body === undefined ? undefined : JSON.stringify(body)
             });
         } catch {
@@ -283,7 +291,7 @@
             try {
                 await fetch(API_BASE + '/api/logout', {
                     method: 'POST',
-                    credentials: 'include',
+                    credentials: consentGranted() ? 'include' : 'omit',
                     headers: { Authorization: 'Bearer ' + t }
                 });
             } catch { /* сессия истечёт сама */ }
@@ -707,6 +715,22 @@
             busy = false;
         }
     });
+
+    /* --- Баннер согласия на куки --- */
+    (function cookieBanner() {
+        const banner = document.getElementById('cookie-banner');
+        if (!banner) return;
+        if (localStorage.getItem(CONSENT_KEY)) return;   // уже выбрано
+        banner.classList.remove('hidden');
+        document.getElementById('cookie-accept').addEventListener('click', () => {
+            localStorage.setItem(CONSENT_KEY, 'granted');
+            banner.classList.add('hidden');
+        });
+        document.getElementById('cookie-decline').addEventListener('click', () => {
+            localStorage.setItem(CONSENT_KEY, 'declined');
+            banner.classList.add('hidden');
+        });
+    })();
 
     /* --- Для demo.js --- */
     window.__ss = {

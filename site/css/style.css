@@ -1079,6 +1079,35 @@ img { max-width: 100%; display: block; }
 }
 .avatar-reset:hover { color: #fff; }
 
+/* --- Cookie banner --- */
+.cookie-banner {
+    position: fixed;
+    left: 50%;
+    bottom: 1.2rem;
+    transform: translateX(-50%);
+    z-index: 3000;
+    width: min(640px, calc(100vw - 2rem));
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    background: #10102a;
+    border: 1px solid var(--clr-border);
+    border-radius: 14px;
+    padding: 1rem 1.4rem;
+    box-shadow: 0 18px 50px rgba(0,0,0,.6);
+    animation: modalIn .3s ease;
+}
+.cookie-text {
+    flex: 1;
+    min-width: 220px;
+    font-size: .88rem;
+    color: var(--clr-text);
+    line-height: 1.5;
+}
+.cookie-actions { display: flex; gap: .6rem; }
+
 /* --- Download --- */
 .download {
     position: relative;
