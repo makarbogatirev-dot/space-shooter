@@ -35,6 +35,20 @@
     const regError = document.getElementById('reg-error');
     const adminBtn = document.getElementById('admin-btn');
 
+    /* --- Цвета аватарок --- */
+    const AVATAR_COLORS = [
+        '#00d4ff','#ff4466','#00cc88','#ffaa00','#aa44ff',
+        '#ff66aa','#00aaff','#ff8844','#44dd44','#ffdd44'
+    ];
+    const DEFAULT_AVATAR_HUE = 220;
+
+    function avatarColor(name, custom) {
+        if (custom) return custom;
+        let h = 0;
+        for (let i = 0; i < name.length; i++) h += name.charCodeAt(i);
+        return `hsl(${(h * 137.508) % 360}, 65%, 50%)`;
+    }
+
     /* --- Сетевой слой --- */
     async function api(path, { method = 'GET', body, auth = true } = {}) {
         const headers = {};
@@ -46,6 +60,7 @@
             res = await fetch(API_BASE + path, {
                 method,
                 headers,
+                credentials: 'include',   // сервер ставит HttpOnly-куку сессии
                 body: body === undefined ? undefined : JSON.stringify(body)
             });
         } catch {
@@ -101,7 +116,10 @@
             profileEl.classList.remove('hidden');
 
             document.getElementById('profile-name').textContent = user.name;
-            document.getElementById('profile-avatar').textContent = user.name[0].toUpperCase();
+            const avatarEl = document.getElementById('profile-avatar');
+            const clr = avatarColor(user.name, user.avatar);
+            avatarEl.textContent = user.name[0].toUpperCase();
+            avatarEl.style.background = clr;
             document.getElementById('profile-since').textContent =
                 'С ' + new Date(user.created).toLocaleDateString('ru-RU');
             document.getElementById('stat-best').textContent = user.best;
@@ -166,7 +184,11 @@
             const place = document.createElement('span');
             place.textContent = i < 3 ? medals[i] : String(i + 1);
             const nick = document.createElement('span');
-            nick.textContent = e.name;
+            nick.className = 'lb-nick';
+            const dot = document.createElement('i');
+            dot.className = 'lb-dot';
+            dot.style.background = avatarColor(e.name, e.avatar);
+            nick.append(dot, document.createTextNode(e.name));
             const score = document.createElement('span');
             score.textContent = e.best;
             row.append(place, nick, score);
@@ -260,7 +282,9 @@
         if (t) {
             try {
                 await fetch(API_BASE + '/api/logout', {
-                    method: 'POST', headers: { Authorization: 'Bearer ' + t }
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { Authorization: 'Bearer ' + t }
                 });
             } catch { /* сессия истечёт сама */ }
         }
@@ -629,6 +653,58 @@
             errEl.textContent = err.message;
         } finally {
             busy = false; btn.disabled = false;
+        }
+    });
+
+    /* --- Аватарка --- */
+    const avatarPicker = document.getElementById('avatar-picker');
+    const avatarSwatches = document.getElementById('avatar-swatches');
+    const avatarReset = document.getElementById('avatar-reset');
+    let pickerOpen = false;
+
+    function openAvatarPicker() {
+        pickerOpen = !pickerOpen;
+        avatarPicker.classList.toggle('hidden', !pickerOpen);
+    }
+    document.getElementById('profile-avatar').addEventListener('click', openAvatarPicker);
+
+    AVATAR_COLORS.forEach(clr => {
+        const s = document.createElement('button');
+        s.type = 'button';
+        s.className = 'avatar-swatch';
+        s.style.background = clr;
+        s.title = clr;
+        s.addEventListener('click', async () => {
+            if (busy) return;
+            busy = true;
+            try {
+                const data = await api('/api/me/avatar', {
+                    method: 'POST', body: { avatar: clr }
+                });
+                user = data.user;
+                refreshUI();
+            } catch (err) {
+                console.warn('Смена аватара:', err.message);
+            } finally {
+                busy = false;
+            }
+        });
+        avatarSwatches.appendChild(s);
+    });
+
+    avatarReset.addEventListener('click', async () => {
+        if (busy) return;
+        busy = true;
+        try {
+            const data = await api('/api/me/avatar', {
+                method: 'POST', body: { avatar: '' }
+            });
+            user = data.user;
+            refreshUI();
+        } catch (err) {
+            console.warn('Сброс аватара:', err.message);
+        } finally {
+            busy = false;
         }
     });
 

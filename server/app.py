@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """Space Shooter — сервер аккаунтов.
 
-Раздаёт статический сайт из ../site и JSON API поверх SQLite.
+Раздаёт статический сайт из ../site и JSON API поверх базы данных.
 Пароли хранятся как PBKDF2-HMAC-SHA256 с индивидуальной солью, в открытом
 виде не сохраняются нигде. Сессии — случайные токены в таблице sessions.
+
+База: PostgreSQL, если задан DATABASE_URL (Render), иначе локальный SQLite —
+файловая база на бесплатном тарифе Render обнуляется при каждом деплое.
 
 Запуск:  python server/app.py
 Переменные окружения:
     PORT         — порт (по умолчанию 8735)
     HOST         — адрес (по умолчанию 127.0.0.1, для деплоя 0.0.0.0)
-    DB_PATH      — путь к файлу БД (по умолчанию server/data/accounts.db)
+    DATABASE_URL — postgres://... (Render); без него — SQLite в DB_PATH
+    DB_PATH      — путь к файлу SQLite (по умолчанию server/data/accounts.db)
     ALLOWED_ORIGIN — значение Access-Control-Allow-Origin (по умолчанию *)
     ADMIN_NAMES  — ники через запятую, у которых есть права разработчика
                    (по умолчанию MakarB2026)
@@ -31,17 +35,25 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse, parse_qs
+from urllib.parse import quote, unquote, urlparse, parse_qs
 
 BASE_DIR = Path(__file__).resolve().parent
 SITE_DIR = (BASE_DIR.parent / "site").resolve()
 DB_PATH = Path(os.environ.get("DB_PATH") or (BASE_DIR / "data" / "accounts.db")).resolve()
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+
+if DATABASE_URL:
+    import psycopg2
+    import psycopg2.extras
+else:
+    psycopg2 = None
 
 PBKDF2_ITERATIONS = 200_000
 SALT_BYTES = 16
 SESSION_TTL = 60 * 60 * 24 * 30  # 30 дней
 MAX_BODY = 8 * 1024
 NAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁё0-9_]{3,20}$")
+AVATAR_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "")
 
 # Права разработчика выдаются по нику, а не по флагу в базе: так их нельзя
@@ -60,7 +72,36 @@ _db_lock = threading.Lock()
 
 
 # ---------------------------------------------------------------- база данных
-def db_connect() -> sqlite3.Connection:
+class PgAdapter:
+    """Тонкая обёртка над psycopg2-соединением под sqlite3-интерфейс:
+    conn.execute(sql, params) с плейсхолдерами «?», строки-словари."""
+
+    def __init__(self, raw):
+        self.raw = raw
+
+    def execute(self, sql, params=()):
+        cur = self.raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql.replace("?", "%s"), tuple(params))
+        return cur
+
+    def executescript(self, script: str) -> None:
+        for stmt in script.split(";"):
+            if stmt.strip():
+                self.raw.cursor().execute(stmt)
+
+    def commit(self):
+        self.raw.commit()
+
+    def rollback(self):
+        self.raw.rollback()
+
+    def close(self):
+        self.raw.close()
+
+
+def db_connect():
+    if DATABASE_URL:
+        return PgAdapter(psycopg2.connect(DATABASE_URL, connect_timeout=10))
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -84,41 +125,55 @@ def db():
             conn.close()
 
 
+# Скалярный максимум: в SQLite это MAX, в PostgreSQL — GREATEST.
+FN_GREATEST = "GREATEST" if DATABASE_URL else "MAX"
+
+
 def db_init() -> None:
+    id_type = "BIGSERIAL PRIMARY KEY" if DATABASE_URL else "INTEGER PRIMARY KEY AUTOINCREMENT"
     with db() as conn:
         conn.executescript(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS users (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                id          {id_type},
                 name        TEXT    NOT NULL UNIQUE,      -- отображаемый ник
                 name_key    TEXT    NOT NULL UNIQUE,      -- ник в нижнем регистре
                 pass_hash   TEXT    NOT NULL,
-                created_at  INTEGER NOT NULL,
+                created_at  BIGINT  NOT NULL,
                 best        INTEGER NOT NULL DEFAULT 0,
                 games       INTEGER NOT NULL DEFAULT 0,
-                kills       INTEGER NOT NULL DEFAULT 0
+                kills       INTEGER NOT NULL DEFAULT 0,
+                avatar      TEXT
             );
             CREATE TABLE IF NOT EXISTS sessions (
                 token      TEXT    PRIMARY KEY,
-                user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                created_at INTEGER NOT NULL,
-                expires_at INTEGER NOT NULL
+                user_id    BIGINT  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at BIGINT  NOT NULL,
+                expires_at BIGINT  NOT NULL
             );
             CREATE TABLE IF NOT EXISTS banned_ips (
                 ip         TEXT    PRIMARY KEY,
                 reason     TEXT    NOT NULL DEFAULT '',
-                created_at INTEGER NOT NULL,
+                created_at BIGINT  NOT NULL,
                 created_by TEXT    NOT NULL DEFAULT '',
-                expires_at INTEGER                     -- NULL = бессрочно
+                expires_at BIGINT                       -- NULL = бессрочно
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_users_best   ON users(best DESC);
             """
         )
-        # Миграция: IP, с которого игрок заходил последним (для бана по нику).
-        cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
-        if "last_ip" not in cols:
-            conn.execute("ALTER TABLE users ADD COLUMN last_ip TEXT")
+        # Миграции для старых баз: колонки, добавленные после первого релиза.
+        if DATABASE_URL:
+            cols = {
+                r["column_name"] for r in conn.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'users'"
+                )
+            }
+        else:
+            cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+        for column in ("last_ip", "avatar"):
+            if column not in cols:
+                conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
 
 
 # ------------------------------------------------------------------- пароли
@@ -178,6 +233,7 @@ def user_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "rank": rank["rank"],
         "total": rank["total"],
         "admin": is_admin(row["name"]),
+        "avatar": row["avatar"],
     }
 
 
@@ -203,10 +259,10 @@ def require_not_banned(conn: sqlite3.Connection, ip: str) -> None:
 
 def leaderboard(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
     rows = conn.execute(
-        "SELECT name, best FROM users WHERE best > 0 ORDER BY best DESC, name LIMIT ?",
+        "SELECT name, best, avatar FROM users WHERE best > 0 ORDER BY best DESC, name LIMIT ?",
         (limit,),
     ).fetchall()
-    return [{"name": r["name"], "best": r["best"]} for r in rows]
+    return [{"name": r["name"], "best": r["best"], "avatar": r["avatar"]} for r in rows]
 
 
 # ------------------------------------------------------- ограничение попыток
@@ -257,22 +313,28 @@ class Handler(BaseHTTPRequestHandler):
         return self.client_address[0]
 
     def _cors_headers(self) -> None:
-        # Авторизация идёт через заголовок Authorization, cookie не используются,
-        # поэтому "*" безопасен и позволяет держать сайт на GitHub Pages.
-        if not self.headers.get("Origin"):
+        origin = self.headers.get("Origin")
+        if not origin:
             return
-        self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN or "*")
+        # Разрешаем заголовок Authorization и куки-сессии. Cookie — HttpOnly и
+        # SameSite=Lax, поэтому межсайтовый POST с чужого домена её не отправит
+        # (защита от CSRF), а эхо Origin вместо "*" нужен, чтобы браузер
+        # пропустил credentials при кросс-доменном запросе с GitHub Pages.
+        self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN or origin)
+        self.send_header("Access-Control-Allow-Credentials", "true")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Max-Age", "86400")
 
-    def send_json(self, status: int, payload: dict | list) -> None:
+    def send_json(self, status: int, payload: dict | list, cookies: list[str] = ()) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self._cors_headers()
+        for cookie in cookies:
+            self.send_header("Set-Cookie", cookie)
         self.end_headers()
         self.wfile.write(body)
 
@@ -300,8 +362,34 @@ class Handler(BaseHTTPRequestHandler):
             return header[7:].strip()
         return ""
 
+    def cookie_token(self) -> str:
+        raw = self.headers.get("Cookie") or ""
+        for part in raw.split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == "ss_session":
+                return unquote(value)
+        return ""
+
+    def session_token(self) -> str:
+        # Заголовок приоритетнее: он есть у клиентов, которые его явно шлют;
+        # куки — запасной путь для браузеров (и переживает чистку localStorage).
+        return self.bearer_token() or self.cookie_token()
+
+    @staticmethod
+    def session_cookie(token: str) -> str:
+        # HttpOnly — доступ только у сервера (защита от XSS), SameSite=Lax —
+        # куки не уходит на POST-запросы с чужих сайтов (защита от CSRF).
+        # Secure включён, т.к. API доступен только по HTTPS; на localhost без
+        # него браузер всё равно примет куку.
+        return (f"ss_session={quote(token)}; Path=/; Max-Age={SESSION_TTL}; "
+                "HttpOnly; SameSite=Lax; Secure")
+
+    @staticmethod
+    def clear_cookie() -> str:
+        return "ss_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure"
+
     def require_user(self, conn: sqlite3.Connection) -> sqlite3.Row:
-        row = user_by_token(conn, self.bearer_token())
+        row = user_by_token(conn, self.session_token())
         if not row:
             raise ApiError(401, "Требуется вход")
         return row
@@ -432,9 +520,9 @@ class Handler(BaseHTTPRequestHandler):
                            FROM users"""
                     ).fetchone()
                     active = conn.execute(
-                        "SELECT COUNT(*) FROM sessions WHERE expires_at > ?",
+                        "SELECT COUNT(*) AS n FROM sessions WHERE expires_at > ?",
                         (int(time.time()),),
-                    ).fetchone()[0]
+                    ).fetchone()["n"]
                     self.send_json(200, {
                         "users": totals["users"],
                         "games": totals["games"],
@@ -482,7 +570,8 @@ class Handler(BaseHTTPRequestHandler):
                 row = conn.execute("SELECT * FROM users WHERE name_key = ?", (name.lower(),)).fetchone()
                 token = create_session(conn, row["id"])
                 reset_attempts(ip)
-                self.send_json(201, {"token": token, "user": user_payload(conn, row)})
+                self.send_json(201, {"token": token, "user": user_payload(conn, row)},
+                               cookies=[self.session_cookie(token)])
             return
 
         if path == "/api/login":
@@ -503,15 +592,16 @@ class Handler(BaseHTTPRequestHandler):
                 reset_attempts(ip)
                 conn.execute("UPDATE users SET last_ip = ? WHERE id = ?", (ip, row["id"]))
                 token = create_session(conn, row["id"])
-                self.send_json(200, {"token": token, "user": user_payload(conn, row)})
+                self.send_json(200, {"token": token, "user": user_payload(conn, row)},
+                               cookies=[self.session_cookie(token)])
             return
 
         if path == "/api/logout":
-            token = self.bearer_token()
+            token = self.session_token()
             with db() as conn:
                 if token:
                     conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
-            self.send_json(200, {"ok": True})
+            self.send_json(200, {"ok": True}, cookies=[self.clear_cookie()])
             return
 
         if path == "/api/score":
@@ -527,11 +617,33 @@ class Handler(BaseHTTPRequestHandler):
                 row = self.require_user(conn)
                 require_not_banned(conn, ip)
                 conn.execute(
-                    """UPDATE users
-                       SET best = MAX(best, ?), games = games + 1, kills = kills + ?
+                    f"""UPDATE users
+                       SET best = {FN_GREATEST}(best, ?), games = games + 1, kills = kills + ?
                        WHERE id = ?""",
                     (score, score, row["id"]),
                 )
+                row = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+                self.send_json(200, {"user": user_payload(conn, row)})
+            return
+
+        if path == "/api/me/avatar":
+            data = self.read_json()
+            avatar = str(data.get("avatar") or "").strip().lstrip("#")
+            if avatar == "":  # пустая строка — сброс к цвету по нику
+                with db() as conn:
+                    row = self.require_user(conn)
+                    conn.execute("UPDATE users SET avatar = NULL WHERE id = ?", (row["id"],))
+                    row = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+                    self.send_json(200, {"user": user_payload(conn, row)})
+                return
+            if len(avatar) == 3:  # короткая форма #f0a -> #ff00aa
+                avatar = avatar[0] * 2 + avatar[1] * 2 + avatar[2] * 2
+            if not re.fullmatch(r"[0-9a-fA-F]{6}", avatar):
+                raise ApiError(400, "Аватар: HEX-цвет, например ff00aa или #f0a")
+            avatar = "#" + avatar.lower()
+            with db() as conn:
+                row = self.require_user(conn)
+                conn.execute("UPDATE users SET avatar = ? WHERE id = ?", (avatar, row["id"]))
                 row = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
                 self.send_json(200, {"user": user_payload(conn, row)})
             return

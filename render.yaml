@@ -1,7 +1,7 @@
 # Деплой сервера аккаунтов на Render (Blueprint).
-# Free-план: диск подключить нельзя, база живёт в файловой системе сервиса и
-# обнуляется при каждом переразвёртывании. Для постоянного хранения перейдите
-# на платный план и раскомментируйте блок disk ниже.
+# База — PostgreSQL (free): данные переживают перезапуски и переразвёртывания,
+# в отличие от SQLite на диске бесплатного веб-сервиса, который обнуляется
+# при каждом деплое и после простоя.
 services:
   - type: web
     name: space-shooter-accounts
@@ -16,14 +16,18 @@ services:
         value: 0.0.0.0
       - key: PORT
         value: 10000
-      - key: DB_PATH
-        value: /opt/render/project/src/server/data/accounts.db
+      - key: DATABASE_URL
+        fromDatabase:
+          name: accounts-db
+          property: connectionString
       # Ограничить доступ только своим сайтом (по умолчанию разрешены любые
-      # источники, т.к. cookie не используются):
+      # источники):
       # - key: ALLOWED_ORIGIN
       #   value: https://makarbogatirev-dot.github.io
-    # disk:
-    #   name: accounts-data
-    #   mountPath: /var/data
-    #   sizeGB: 1
-    #   # при подключении диска задайте DB_PATH=/var/data/accounts.db
+  - type: data
+    name: accounts-db
+    database: true
+    plan: free
+    region: frankfurt
+    # Внимание: бесплатный PostgreSQL на Render живёт 30 дней, потом требует
+    # продления одной кнопкой в дашборде (Render -> Postgres -> Keep instance).

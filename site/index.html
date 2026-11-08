@@ -326,11 +326,16 @@
             <!-- Экран: профиль -->
             <div id="auth-profile" class="hidden">
                 <div class="profile-head">
-                    <div id="profile-avatar" class="profile-avatar">N</div>
+                    <button id="profile-avatar" class="profile-avatar" type="button" title="Выбрать цвет аватара">N</button>
                     <div>
                         <h3 id="profile-name" class="profile-name">Nova</h3>
                         <p id="profile-since" class="profile-since"></p>
                     </div>
+                </div>
+                <div id="avatar-picker" class="avatar-picker hidden">
+                    <span class="avatar-picker-label">Цвет аватара:</span>
+                    <div id="avatar-swatches" class="avatar-swatches"></div>
+                    <button id="avatar-reset" class="avatar-reset" type="button">↺ По умолчанию</button>
                 </div>
                 <div class="profile-stats">
                     <div class="stat"><span class="stat-value" id="stat-best">0</span><span class="stat-label">Рекорд</span></div>
