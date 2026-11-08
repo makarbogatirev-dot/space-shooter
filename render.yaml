@@ -24,9 +24,10 @@ services:
       # источники):
       # - key: ALLOWED_ORIGIN
       #   value: https://makarbogatirev-dot.github.io
-  - type: data
-    name: accounts-db
-    database: true
+
+databases:
+  - name: accounts-db
+    databaseName: accounts
     plan: free
     region: frankfurt
     # Внимание: бесплатный PostgreSQL на Render живёт 30 дней, потом требует
