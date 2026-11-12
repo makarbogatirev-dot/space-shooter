@@ -3,10 +3,34 @@
    ============================================ */
 
 document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
     initMobileMenu();
     initScrollAnimations();
     initActiveNav();
 });
+
+/* --- Theme toggle (dark/light) --- */
+function initTheme() {
+    const STORAGE_KEY = 'ss_theme';
+    const btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+
+    function apply(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        btn.textContent = theme === 'light' ? '☀️' : '🌙';
+        localStorage.setItem(STORAGE_KEY, theme);
+    }
+
+    // Восстанавливаем сохранённую тему или определяем по системным настройкам
+    const saved = localStorage.getItem(STORAGE_KEY);
+    const prefersLight = window.matchMedia('(prefers-color-scheme: light)').matches;
+    apply(saved || (prefersLight ? 'light' : 'dark'));
+
+    btn.addEventListener('click', () => {
+        const current = document.documentElement.getAttribute('data-theme');
+        apply(current === 'light' ? 'dark' : 'light');
+    });
+}
 
 /* --- Mobile hamburger menu --- */
 function initMobileMenu() {

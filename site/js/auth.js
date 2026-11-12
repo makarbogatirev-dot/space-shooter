@@ -358,6 +358,7 @@
         loadAdminStats();
         loadAdminUsers();
         loadAdminBans();
+        loadAdminLogs();
     }
     function closeAdminModals() {
         adminModal.classList.add('hidden');
@@ -495,7 +496,50 @@
         loadAdminStats();
         loadAdminUsers();
         loadAdminBans();
+        loadAdminLogs();
     });
+
+    const ACTION_LABELS = {
+        'ban': '🚫 Бан',
+        'unban': '✅ Разбан',
+        'delete-user': '🗑 Удаление',
+        'reset-password': '🔑 Смена пароля',
+        'edit-stats': '✏️ Правка статистики'
+    };
+
+    async function loadAdminLogs() {
+        const logsEl = document.getElementById('admin-logs');
+        const logsEmpty = document.getElementById('admin-logs-empty');
+        logsEl.innerHTML = '';
+        let logs = [];
+        try {
+            const data = await api('/api/admin/logs');
+            logs = data.logs || [];
+        } catch (err) {
+            logsEmpty.textContent = err.message;
+            logsEmpty.style.display = '';
+            return;
+        }
+        if (!logs.length) {
+            logsEmpty.textContent = 'Действий пока не было';
+            logsEmpty.style.display = '';
+            return;
+        }
+        logsEmpty.style.display = 'none';
+        for (const l of logs) {
+            const tr = document.createElement('tr');
+            const when = document.createElement('td');
+            const d = new Date(l.created);
+            when.textContent = d.toLocaleDateString('ru-RU') + ' ' + d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+            const who = document.createElement('td'); who.textContent = l.admin;
+            const act = document.createElement('td'); act.textContent = ACTION_LABELS[l.action] || l.action;
+            const target = document.createElement('td'); target.textContent = l.target || '—';
+            const details = document.createElement('td'); details.textContent = l.details || '—';
+            details.title = l.details || '';
+            tr.append(when, who, act, target, details);
+            logsEl.appendChild(tr);
+        }
+    }
 
     /* --- Редактирование игрока --- */
     const adminTabStats = document.getElementById('admin-tab-stats');
@@ -713,6 +757,62 @@
             console.warn('Сброс аватара:', err.message);
         } finally {
             busy = false;
+        }
+    });
+
+    /* --- GDPR: экспорт и удаление аккаунта --- */
+    document.getElementById('export-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('export-btn');
+        if (busy || !user) return;
+        busy = true; btn.disabled = true; btn.textContent = 'Выгружаем…';
+        try {
+            const data = await api('/api/me/export');
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'space-shooter-' + user.name + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            loginError.textContent = err.message;
+        } finally {
+            busy = false; btn.disabled = false; btn.textContent = '📥 Мои данные';
+        }
+    });
+
+    const delAccModal = document.getElementById('delete-account-modal');
+    document.getElementById('delete-account-btn').addEventListener('click', () => {
+        document.getElementById('delacc-pass').value = '';
+        document.getElementById('delacc-error').textContent = '';
+        delAccModal.classList.remove('hidden');
+    });
+    delAccModal.querySelectorAll('[data-close]').forEach(
+        el => el.addEventListener('click', () => delAccModal.classList.add('hidden')));
+    delAccModal.addEventListener('click', e => {
+        if (e.target === delAccModal) delAccModal.classList.add('hidden');
+    });
+
+    document.getElementById('delacc-confirm').addEventListener('click', async () => {
+        if (busy) return;
+        const errEl = document.getElementById('delacc-error');
+        errEl.textContent = '';
+        const pass = document.getElementById('delacc-pass').value;
+        if (!pass) { errEl.textContent = 'Введи пароль'; return; }
+        const btn = document.getElementById('delacc-confirm');
+        busy = true; btn.disabled = true; btn.textContent = 'Удаляем…';
+        try {
+            await api('/api/me/delete', { method: 'POST', body: { password: pass } });
+            delAccModal.classList.add('hidden');
+            closeModal();
+            clearToken();
+            user = null;
+            refreshUI();
+            updateLeaderboard();
+        } catch (err) {
+            errEl.textContent = err.message;
+        } finally {
+            busy = false; btn.disabled = false; btn.textContent = 'Удалить навсегда';
         }
     });
 

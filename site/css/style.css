@@ -25,7 +25,60 @@
     --transition:    .3s ease;
 }
 
+/* Светлая тема */
+[data-theme="light"] {
+    --clr-bg:        #f5f5fa;
+    --clr-bg-alt:    #e8e8f0;
+    --clr-surface:   rgba(0,0,0,.04);
+    --clr-border:    rgba(0,0,0,.1);
+    --clr-text:      #1a1a2e;
+    --clr-text-dim:  #555577;
+    --clr-accent:    #0066cc;
+    --clr-accent2:   #cc2244;
+    --clr-glow:      rgba(0,100,200,.2);
+}
+
 html { scroll-behavior: smooth; }
+
+/* --- Светлая тема: правки для мест с жёстко заданными цветами --- */
+[data-theme="light"] .navbar { background: rgba(245,245,250,.85); }
+[data-theme="light"] .nav-menu a.active,
+[data-theme="light"] .nav-menu a:hover { color: #111; }
+[data-theme="light"] .modal-card { background: #ffffff; }
+[data-theme="light"] .modal-close { background: rgba(0,0,0,.06); }
+[data-theme="light"] .modal-close:hover { background: rgba(204,34,68,.2); }
+[data-theme="light"] .auth-tabs { background: rgba(0,0,0,.05); }
+[data-theme="light"] .field input,
+[data-theme="light"] .admin-search { background: rgba(0,0,0,.04); }
+[data-theme="light"] .stat,
+[data-theme="light"] .admin-stat,
+[data-theme="light"] .hud-item,
+[data-theme="light"] .controls-card,
+[data-theme="light"] .feature-card,
+[data-theme="light"] .requirements-card,
+[data-theme="light"] .leaderboard { background: rgba(0,0,0,.03); }
+[data-theme="light"] .profile-name,
+[data-theme="light"] .admin-title,
+[data-theme="light"] .feature-card h3,
+[data-theme="light"] .step-content h3,
+[data-theme="light"] .controls-card h3,
+[data-theme="light"] .req-value,
+[data-theme="light"] .hud-value,
+[data-theme="light"] .overlay-inner h3 { color: #111; }
+[data-theme="light"] .lb-header { background: rgba(0,0,0,.05); }
+[data-theme="light"] .lb-row:hover,
+[data-theme="light"] .admin-table tbody tr:hover { background: rgba(0,0,0,.04); }
+[data-theme="light"] .admin-table thead th { background: #e3e3ee; }
+[data-theme="light"] .cookie-banner { background: #ffffff; }
+[data-theme="light"] .footer { background: rgba(0,0,0,.05); }
+[data-theme="light"] .stars, [data-theme="light"] .stars2, [data-theme="light"] .stars3 { opacity: .25; }
+[data-theme="light"] .demo-frame canvas { background: #1a1a2e; }
+[data-theme="light"] .demo-overlay { background: rgba(245,245,250,.85); }
+[data-theme="light"] .meteor-cell { background: radial-gradient(circle at 50% 45%, #dfe4f5 0%, #eef0fa 75%); }
+[data-theme="light"] .fullscreen-btn { background: rgba(245,245,250,.7); color: #1a1a2e; }
+[data-theme="light"] .req-install code { background: rgba(0,0,0,.07); }
+[data-theme="light"] .control-item kbd { background: rgba(0,0,0,.06); border-color: rgba(0,0,0,.15); }
+[data-theme="light"] .modal-backdrop { background: rgba(230,230,240,.7); }
 
 body {
     font-family: var(--font-main);
@@ -124,6 +177,22 @@ img { max-width: 100%; display: block; }
 .nav-menu a:hover,
 .nav-menu a.active { color: #fff; }
 .nav-menu a:hover::after { width: 100%; }
+
+/* --- Theme toggle --- */
+.theme-btn {
+    background: none;
+    border: 1px solid var(--clr-border);
+    color: var(--clr-text);
+    font-size: 1.1rem;
+    padding: .3rem .6rem;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background var(--transition), transform .15s;
+}
+.theme-btn:hover {
+    background: var(--clr-surface);
+    transform: rotate(15deg);
+}
 
 .nav-btn {
     background: linear-gradient(135deg, var(--clr-accent), #0088cc);
@@ -1143,6 +1212,66 @@ img { max-width: 100%; display: block; }
     text-underline-offset: 3px;
 }
 .alt-link:hover { color: #fff; }
+
+/* --- Changelog (список версий) --- */
+.changelog {
+    max-width: 640px;
+    margin: 3rem auto 0;
+    text-align: left;
+}
+.changelog-title {
+    font-size: 1.2rem;
+    color: #fff;
+    margin-bottom: 1rem;
+    text-align: center;
+}
+.version-card {
+    background: var(--clr-surface);
+    border: 1px solid var(--clr-border);
+    border-radius: var(--radius);
+    padding: 1.2rem 1.5rem;
+    margin-bottom: 1rem;
+    transition: border-color var(--transition);
+}
+.version-card:hover { border-color: var(--clr-accent); }
+.version-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: .8rem;
+}
+.version-tag {
+    background: linear-gradient(135deg, var(--clr-accent), #0088cc);
+    color: #fff;
+    font-weight: 700;
+    font-size: .9rem;
+    padding: .25rem .8rem;
+    border-radius: 999px;
+}
+.version-date {
+    color: var(--clr-text-dim);
+    font-size: .82rem;
+}
+.version-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: .45rem;
+}
+.version-list li {
+    color: var(--clr-text-dim);
+    font-size: .9rem;
+    line-height: 1.5;
+}
+
+/* --- Кнопки данных в профиле (GDPR) --- */
+.profile-data-actions {
+    display: flex;
+    gap: .6rem;
+    justify-content: center;
+    margin-bottom: .8rem;
+    flex-wrap: wrap;
+}
 
 /* --- Footer --- */
 .footer {

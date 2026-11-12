@@ -25,6 +25,7 @@
                 <li><a href="#screenshots">Скриншоты</a></li>
                 <li><a href="#howto">Как играть</a></li>
                 <li><a href="#demo">Демо</a></li>
+                <li><button id="theme-toggle" class="theme-btn" type="button" title="Сменить тему">🌙</button></li>
                 <li><button class="profile-btn" id="profile-btn" type="button">👤 Войти</button></li>
                 <li><a href="#download" class="nav-btn">Скачать</a></li>
             </ul>
@@ -273,7 +274,38 @@
                 <span class="alt-label">Для разработчиков:</span>
                 <a href="download/space_shuter.py" download class="alt-link">скачать исходный код (.py)</a>
             </div>
-            <p class="download-hint">Версия 1.0 • 30.5 МБ • Windows 10/11 x64 • Бесплатно</p>
+            <p class="download-hint">Версия 1.1 beta • Windows 10/11 x64 • Бесплатно</p>
+
+            <div class="changelog">
+                <h3 class="changelog-title">📋 Список версий</h3>
+                <div class="version-card">
+                    <div class="version-head">
+                        <span class="version-tag">v1.1 beta</span>
+                        <span class="version-date">01.11.2026</span>
+                    </div>
+                    <ul class="version-list">
+                        <li>🌐 Аккаунты: регистрация и вход через сервер, рекорды доступны с любого устройства</li>
+                        <li>🏆 Онлайн-таблица лидеров и живое демо прямо на сайте</li>
+                        <li>👥 Друзья: добавляй игроков и соревнуйся с ними</li>
+                        <li>🎨 Смена цвета аватара и светлая тема сайта</li>
+                        <li>🛠 Панель разработчика: статистика, баны по IP, журнал действий</li>
+                        <li>🔒 Куки-согласие, экспорт и удаление аккаунта (GDPR)</li>
+                        <li>🛡 Режим Бога больше не засчитывает рекорд</li>
+                    </ul>
+                </div>
+                <div class="version-card">
+                    <div class="version-head">
+                        <span class="version-tag">v1.0</span>
+                        <span class="version-date">30.05.2026</span>
+                    </div>
+                    <ul class="version-list">
+                        <li>🚀 Первый релиз: космический шутер на Python и Pygame</li>
+                        <li>🌠 20 видов метеоритов с вращением и разной скоростью</li>
+                        <li>🔫 Лазерное оружие, система очков, режим Бога (клавиша 9)</li>
+                        <li>📦 Установщик и portable-версия для Windows</li>
+                    </ul>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -345,6 +377,10 @@
                 <p id="profile-rank" class="profile-rank"></p>
                 <div class="profile-actions">
                     <button id="admin-btn" class="btn btn-primary btn-block hidden" type="button">🛠 Панель разработчика</button>
+                    <div class="profile-data-actions">
+                        <button id="export-btn" class="btn btn-secondary btn-small" type="button">📥 Мои данные</button>
+                        <button id="delete-account-btn" class="btn btn-secondary btn-small" type="button">🗑 Удалить аккаунт</button>
+                    </div>
                     <button id="logout-btn" class="btn btn-secondary" type="button">Выйти</button>
                 </div>
             </div>
@@ -385,6 +421,17 @@
                     <tbody id="admin-bans"></tbody>
                 </table>
                 <p id="admin-bans-empty" class="admin-empty">Блокировок нет</p>
+            </div>
+
+            <h4 class="admin-subtitle">Журнал действий</h4>
+            <div class="admin-table-wrap admin-bans-wrap">
+                <table class="admin-table">
+                    <thead>
+                        <tr><th>Когда</th><th>Кто</th><th>Действие</th><th>Над кем</th><th>Детали</th></tr>
+                    </thead>
+                    <tbody id="admin-logs"></tbody>
+                </table>
+                <p id="admin-logs-empty" class="admin-empty">Действий пока не было</p>
             </div>
 
             <p class="auth-note">Действия видны только аккаунтам с правами разработчика. Смена пароля завершает все сессии игрока.</p>
@@ -440,9 +487,28 @@
         </div>
     </div>
 
+    <!-- Модалка удаления своего аккаунта (GDPR) -->
+    <div id="delete-account-modal" class="modal hidden">
+        <div class="modal-backdrop" data-close></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="delacc-title">
+            <button class="modal-close" data-close type="button" aria-label="Закрыть">✕</button>
+            <h3 id="delacc-title" class="admin-title">🗑 Удаление аккаунта</h3>
+            <p class="admin-del-text">
+                Аккаунт, статистика, друзья и все сессии будут удалены безвозвратно.
+                Перед удалением можешь выгрузить свои данные кнопкой «📥 Мои данные».
+                Для подтверждения введи пароль.
+            </p>
+            <label class="field">
+                <span>Пароль</span>
+                <input type="password" id="delacc-pass" placeholder="Твой пароль" required>
+            </label>
+            <p id="delacc-error" class="form-error"></p>
+            <button id="delacc-confirm" class="btn btn-danger btn-block" type="button">Удалить навсегда</button>
+        </div>
+    </div>
+
     <!-- Согласие на куки -->
-    <div id="cookie-banner" class="cookie-banner hidden" role="dialog" aria-label="Согласие на использование куки">
-        <p class="cookie-text">
+    <div id="cookie-banner" class="cookie-banner hidden" role="dialog" aria-label="Согласие на использование куки">        <p class="cookie-text">
             🍪 Мы используем куки, чтобы ты оставался в аккаунте между визитами.
             Только технические — без рекламы и трекеров.
         </p>

@@ -29,10 +29,13 @@ import mimetypes
 import os
 import re
 import secrets
+import smtplib
+import ssl
 import sqlite3
 import sys
 import threading
 import time
+from email.mime.text import MIMEText
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse, parse_qs
@@ -53,8 +56,38 @@ SALT_BYTES = 16
 SESSION_TTL = 60 * 60 * 24 * 30  # 30 дней
 MAX_BODY = 8 * 1024
 NAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁё0-9_]{3,20}$")
+EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
 AVATAR_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "")
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASS = os.environ.get("SMTP_PASS", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
+
+# ------------------------------------------------------------------- почта
+def send_email(to_email: str, subject: str, body: str) -> bool:
+    """Отправить email через SMTP. Возвращает True при успехе."""
+    if not SMTP_USER or not SMTP_PASS:
+        print("SMTP не настроен — письмо не отправлено:", to_email, subject)
+        return False
+    try:
+        msg = MIMEText(body, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = SMTP_FROM
+        msg["To"] = to_email
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
+            server.ehlo()
+            server.starttls(context=ctx)
+            server.ehlo()
+            server.login(SMTP_USER, SMTP_PASS)
+            server.sendmail(SMTP_FROM, to_email, msg.as_string())
+        print("Письмо отправлено:", to_email)
+        return True
+    except Exception as exc:
+        print("Ошибка отправки письма:", exc)
+        return False
 
 # Права разработчика выдаются по нику, а не по флагу в базе: так их нельзя
 # получить через API, и они переживают пересоздание базы на бесплатном тарифе.
@@ -158,6 +191,20 @@ def db_init() -> None:
                 created_by TEXT    NOT NULL DEFAULT '',
                 expires_at BIGINT                       -- NULL = бессрочно
             );
+            CREATE TABLE IF NOT EXISTS friends (
+                user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                friend_id  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at BIGINT NOT NULL,
+                PRIMARY KEY (user_id, friend_id)
+            );
+            CREATE TABLE IF NOT EXISTS admin_logs (
+                id         {id_type},
+                admin_name TEXT   NOT NULL,
+                action     TEXT   NOT NULL,
+                target     TEXT   NOT NULL DEFAULT '',
+                details    TEXT   NOT NULL DEFAULT '',
+                created_at BIGINT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_users_best   ON users(best DESC);
             """
@@ -171,7 +218,7 @@ def db_init() -> None:
             }
         else:
             cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
-        for column in ("last_ip", "avatar"):
+        for column in ("last_ip", "avatar", "email"):
             if column not in cols:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
 
@@ -224,6 +271,19 @@ def user_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "SELECT COUNT(*) + 1 AS rank, (SELECT COUNT(*) FROM users) AS total FROM users WHERE best > ?",
         (row["best"],),
     ).fetchone()
+    # Загружаем друзей с их статистикой
+    friend_rows = conn.execute(
+        """SELECT u.name, u.best, u.avatar
+           FROM friends f
+           JOIN users u ON u.id = f.friend_id
+           WHERE f.user_id = ?
+           ORDER BY u.best DESC""",
+        (row["id"],),
+    ).fetchall()
+    friends = [
+        {"name": r["name"], "best": r["best"], "avatar": r["avatar"]}
+        for r in friend_rows
+    ]
     return {
         "name": row["name"],
         "created": row["created_at"] * 1000,
@@ -234,6 +294,8 @@ def user_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "total": rank["total"],
         "admin": is_admin(row["name"]),
         "avatar": row["avatar"],
+        "email": row["email"] if "email" in row.keys() else None,
+        "friends": friends,
     }
 
 
@@ -255,6 +317,16 @@ def require_not_banned(conn: sqlite3.Connection, ip: str) -> None:
                  if ban["expires_at"] else "навсегда")
         reason = f" Причина: {ban['reason']}" if ban["reason"] else ""
         raise ApiError(403, f"Ваш IP заблокирован {until}.{reason}")
+
+
+def log_admin_action(conn: sqlite3.Connection, admin_name: str, action: str,
+                     target: str = "", details: str = "") -> None:
+    """Журнал действий разработчика: кто, что, над кем и подробности."""
+    conn.execute(
+        """INSERT INTO admin_logs (admin_name, action, target, details, created_at)
+           VALUES (?, ?, ?, ?, ?)""",
+        (admin_name, action, target, details, int(time.time())),
+    )
 
 
 def leaderboard(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
@@ -531,6 +603,26 @@ class Handler(BaseHTTPRequestHandler):
                         "sessions": active,
                     })
                 return
+            if path == "/api/admin/logs":
+                with db() as conn:
+                    self.require_admin(conn)
+                    rows = conn.execute(
+                        """SELECT * FROM admin_logs
+                           ORDER BY created_at DESC LIMIT 200"""
+                    ).fetchall()
+                    self.send_json(200, {
+                        "logs": [
+                            {
+                                "admin": r["admin_name"],
+                                "action": r["action"],
+                                "target": r["target"],
+                                "details": r["details"],
+                                "created": r["created_at"] * 1000,
+                            }
+                            for r in rows
+                        ]
+                    })
+                return
             self.send_json(404, {"error": "Неизвестный метод API"})
         except ApiError as exc:
             self.send_json(exc.status, {"error": exc.message})
@@ -547,6 +639,7 @@ class Handler(BaseHTTPRequestHandler):
             data = self.read_json()
             name = str(data.get("name") or "").strip()
             password = str(data.get("password") or "")
+            email = str(data.get("email") or "").strip()
 
             if not NAME_RE.match(name):
                 raise ApiError(400, "Ник: 3–20 символов, буквы, цифры и _")
@@ -554,6 +647,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise ApiError(400, "Пароль: минимум 6 символов")
             if len(password) > 200:
                 raise ApiError(400, "Пароль слишком длинный")
+            if email and not EMAIL_RE.match(email):
+                raise ApiError(400, "Некорректный email")
 
             note_attempt(ip)
             with db() as conn:
@@ -563,13 +658,23 @@ class Handler(BaseHTTPRequestHandler):
                 ).fetchone():
                     raise ApiError(409, "Этот ник уже занят")
                 conn.execute(
-                    """INSERT INTO users (name, name_key, pass_hash, created_at, last_ip)
-                       VALUES (?, ?, ?, ?, ?)""",
-                    (name, name.lower(), hash_password(password), int(time.time()), ip),
+                    """INSERT INTO users (name, name_key, pass_hash, created_at, last_ip, email)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (name, name.lower(), hash_password(password), int(time.time()), ip,
+                     email if email else None),
                 )
                 row = conn.execute("SELECT * FROM users WHERE name_key = ?", (name.lower(),)).fetchone()
                 token = create_session(conn, row["id"])
                 reset_attempts(ip)
+                if email:
+                    send_email(
+                        email,
+                        "Добро пожаловать в Space Shooter! 🚀",
+                        f"Привет, {name}!\n\n"
+                        "Твой аккаунт в Space Shooter успешно создан.\n"
+                        "Заходи на сайт, играй в демо и соревнуйся с друзьями за лучший рекорд!\n\n"
+                        "Если это был не ты — смени пароль в профиле или напиши разработчику.",
+                    )
                 self.send_json(201, {"token": token, "user": user_payload(conn, row)},
                                cookies=[self.session_cookie(token)])
             return
@@ -648,6 +753,125 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"user": user_payload(conn, row)})
             return
 
+        if path == "/api/me/email":
+            data = self.read_json()
+            email = str(data.get("email") or "").strip()
+            if email and not EMAIL_RE.match(email):
+                raise ApiError(400, "Некорректный email")
+            with db() as conn:
+                row = self.require_user(conn)
+                conn.execute(
+                    "UPDATE users SET email = ? WHERE id = ?",
+                    (email if email else None, row["id"]),
+                )
+                row = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+                self.send_json(200, {"user": user_payload(conn, row)})
+            return
+
+        if path == "/api/friends/add":
+            data = self.read_json()
+            target = str(data.get("target") or "").strip().lower()
+            if not target:
+                raise ApiError(400, "Укажите ник друга")
+            with db() as conn:
+                me = self.require_user(conn)
+                if me["name_key"] == target:
+                    raise ApiError(400, "Нельзя добавить себя")
+                friend = conn.execute(
+                    "SELECT id FROM users WHERE name_key = ?", (target,)
+                ).fetchone()
+                if not friend:
+                    raise ApiError(404, "Игрок не найден")
+                if conn.execute(
+                    "SELECT 1 FROM friends WHERE user_id = ? AND friend_id = ?",
+                    (me["id"], friend["id"]),
+                ).fetchone():
+                    raise ApiError(409, "Уже в друзьях")
+                now = int(time.time())
+                # Дружба взаимная: одна запись на каждое направление.
+                conn.execute(
+                    "INSERT INTO friends (user_id, friend_id, created_at) VALUES (?, ?, ?)",
+                    (me["id"], friend["id"], now),
+                )
+                conn.execute(
+                    "INSERT INTO friends (user_id, friend_id, created_at) VALUES (?, ?, ?)",
+                    (friend["id"], me["id"], now),
+                )
+            self.send_json(200, {"ok": True})
+            return
+
+        if path == "/api/friends/remove":
+            data = self.read_json()
+            target = str(data.get("target") or "").strip().lower()
+            if not target:
+                raise ApiError(400, "Укажите ник друга")
+            with db() as conn:
+                me = self.require_user(conn)
+                friend = conn.execute(
+                    "SELECT id FROM users WHERE name_key = ?", (target,)
+                ).fetchone()
+                if not friend:
+                    raise ApiError(404, "Игрок не найден")
+                cur = conn.execute(
+                    "DELETE FROM friends WHERE user_id = ? AND friend_id = ?",
+                    (me["id"], friend["id"]),
+                )
+                conn.execute(
+                    "DELETE FROM friends WHERE user_id = ? AND friend_id = ?",
+                    (friend["id"], me["id"]),
+                )
+                if cur.rowcount == 0:
+                    raise ApiError(404, "Этого игрока нет в друзьях")
+            self.send_json(200, {"ok": True})
+            return
+
+        if path == "/api/me/export":
+            # GDPR: выгрузка всех данных игрока в JSON.
+            with db() as conn:
+                row = self.require_user(conn)
+                friends = conn.execute(
+                    """SELECT u.name, u.best FROM friends f
+                       JOIN users u ON u.id = f.friend_id
+                       WHERE f.user_id = ? ORDER BY u.best DESC""",
+                    (row["id"],),
+                ).fetchall()
+                export = {
+                    "exported_at": int(time.time()) * 1000,
+                    "account": {
+                        "name": row["name"],
+                        "created": row["created_at"] * 1000,
+                        "email": row["email"],
+                        "avatar": row["avatar"],
+                    },
+                    "stats": {
+                        "best": row["best"],
+                        "games": row["games"],
+                        "kills": row["kills"],
+                    },
+                    "friends": [{"name": f["name"], "best": f["best"]} for f in friends],
+                    "sessions": conn.execute(
+                        """SELECT created_at * 1000 AS created, expires_at * 1000 AS expires
+                           FROM sessions WHERE user_id = ?""",
+                        (row["id"],),
+                    ).fetchall(),
+                    "note": "Пароли не экспортируются — они хранятся только как необратимые хэши.",
+                }
+                export["sessions"] = [dict(s) for s in export["sessions"]]
+            self.send_json(200, export)
+            return
+
+        if path == "/api/me/delete":
+            # GDPR: безвозвратное удаление собственного аккаунта (нужен пароль).
+            data = self.read_json()
+            password = str(data.get("password") or "")
+            with db() as conn:
+                row = self.require_user(conn)
+                if not verify_password(password, row["pass_hash"]):
+                    raise ApiError(401, "Неверный пароль")
+                conn.execute("DELETE FROM users WHERE id = ?", (row["id"],))
+            self.send_json(200, {"ok": True}, cookies=[self.clear_cookie()])
+            return
+
         if path.startswith("/api/admin/"):
             data = self.read_json()
             target = str(data.get("name") or "").strip().lower()
@@ -664,9 +888,9 @@ class Handler(BaseHTTPRequestHandler):
                 if len(password) > 200:
                     raise ApiError(400, "Пароль слишком длинный")
                 with db() as conn:
-                    self.require_admin(conn)
+                    admin = self.require_admin(conn)
                     row = conn.execute(
-                        "SELECT id FROM users WHERE name_key = ?", (target,)
+                        "SELECT id, name, email FROM users WHERE name_key = ?", (target,)
                     ).fetchone()
                     if not row:
                         raise ApiError(404, "Игрок не найден")
@@ -676,6 +900,18 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     # Сбрасываем входы этого игрока — старый пароль больше не работает.
                     conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+                    log_admin_action(conn, admin["name"], "reset-password", row["name"],
+                                     "все сессии сброшены")
+                    # Уведомляем по email, если он есть
+                    if row["email"]:
+                        send_email(
+                            row["email"],
+                            "Твой пароль в Space Shooter изменён 🔑",
+                            f"Привет, {row['name']}!\n\n"
+                            f"Пароль твоего аккаунта был изменён администратором.\n"
+                            f"Если это был не ты — срочно свяжись с поддержкой!\n\n"
+                            f"(Инициировал: {admin['name']})",
+                        )
                 self.send_json(200, {"ok": True})
                 return
 
@@ -694,13 +930,22 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(400, "Нет полей для изменения")
                 sets = ", ".join(f"{k} = ?" for k in stats)
                 with db() as conn:
-                    self.require_admin(conn)
-                    cur = conn.execute(
+                    admin = self.require_admin(conn)
+                    before = conn.execute(
+                        "SELECT name, best, games, kills FROM users WHERE name_key = ?",
+                        (target,),
+                    ).fetchone()
+                    if not before:
+                        raise ApiError(404, "Игрок не найден")
+                    conn.execute(
                         f"UPDATE users SET {sets} WHERE name_key = ?",
                         (*stats.values(), target),
                     )
-                    if cur.rowcount == 0:
-                        raise ApiError(404, "Игрок не найден")
+                    log_admin_action(
+                        conn, admin["name"], "edit-stats", before["name"],
+                        f"было best={before['best']} games={before['games']} kills={before['kills']}"
+                        f" -> стало {', '.join(f'{k}={v}' for k, v in stats.items())}",
+                    )
                 self.send_json(200, {"ok": True})
                 return
 
@@ -714,7 +959,11 @@ class Handler(BaseHTTPRequestHandler):
                         raise ApiError(404, "Игрок не найден")
                     if row["id"] == admin["id"]:
                         raise ApiError(400, "Нельзя удалить собственный аккаунт")
+                    if is_admin(row["name"]):
+                        raise ApiError(403, "Нельзя удалить аккаунт разработчика")
                     conn.execute("DELETE FROM users WHERE id = ?", (row["id"],))
+                    log_admin_action(conn, admin["name"], "delete-user", row["name"],
+                                     "аккаунт, статистика и сессии удалены")
                 self.send_json(200, {"ok": True})
                 return
 
@@ -724,10 +973,12 @@ class Handler(BaseHTTPRequestHandler):
                     # Бан по нику: берём IP, с которого игрок заходил последним.
                     with db() as peek:
                         row = peek.execute(
-                            "SELECT last_ip FROM users WHERE name_key = ?", (target,)
+                            "SELECT last_ip, name FROM users WHERE name_key = ?", (target,)
                         ).fetchone()
                     if not row:
                         raise ApiError(404, "Игрок не найден")
+                    if is_admin(row["name"]):
+                        raise ApiError(403, "Нельзя заблокировать аккаунт разработчика")
                     if not row["last_ip"]:
                         raise ApiError(400, "У игрока нет сохранённого IP — он ещё не входил")
                     ip = row["last_ip"]
@@ -743,6 +994,17 @@ class Handler(BaseHTTPRequestHandler):
                 expires = int(time.time()) + days * 86400 if days else None
                 with db() as conn:
                     admin = self.require_admin(conn)
+                    # Защита: нельзя забанить IP, под которым работает любой админ.
+                    admin_ips = {
+                        r["last_ip"] for r in conn.execute(
+                            "SELECT last_ip FROM users WHERE name_key IN ({})".format(
+                                ", ".join("?" * len(ADMIN_NAMES))
+                            ),
+                            tuple(ADMIN_NAMES),
+                        ) if r["last_ip"]
+                    }
+                    if ip in admin_ips:
+                        raise ApiError(403, "Этот IP принадлежит аккаунту разработчика")
                     if ban_for_ip(conn, ip):
                         raise ApiError(409, "Этот IP уже заблокирован")
                     conn.execute(
@@ -756,6 +1018,9 @@ class Handler(BaseHTTPRequestHandler):
                            (SELECT id FROM users WHERE last_ip = ?)""",
                         (ip,),
                     )
+                    log_admin_action(conn, admin["name"], "ban",
+                                     f"ip={ip}",
+                                     f"reason={reason or '—'} days={days or '∞'}")
                 self.send_json(200, {"ok": True, "ip": ip})
                 return
 
@@ -764,10 +1029,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not ip:
                     raise ApiError(400, "Укажите IP")
                 with db() as conn:
-                    self.require_admin(conn)
+                    admin = self.require_admin(conn)
                     cur = conn.execute("DELETE FROM banned_ips WHERE ip = ?", (ip,))
                     if cur.rowcount == 0:
                         raise ApiError(404, "Такого бана нет")
+                    log_admin_action(conn, admin["name"], "unban", f"ip={ip}", "")
                 self.send_json(200, {"ok": True})
                 return
 
