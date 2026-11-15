@@ -840,4 +840,63 @@
         updateLeaderboard,
         apiBase: API_BASE
     };
+
+    /* ============================================
+       Счётчик скачиваний
+       ============================================ */
+    const downloadCounts = {};
+
+    function formatCount(n) {
+        if (n < 1000) return String(n);
+        return n >= 1000000
+            ? (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M'
+            : (n / 1000).toFixed(0) + 'K';
+    }
+
+    function renderCounts() {
+        document.querySelectorAll('.dl-count').forEach(el => {
+            const key = el.getAttribute('data-key');
+            if (key && key in downloadCounts) {
+                const c = downloadCounts[key];
+                el.textContent = '· ' + formatCount(c);
+                el.removeAttribute('data-empty');
+            } else {
+                el.setAttribute('data-empty', '1');
+                el.textContent = '';
+            }
+        });
+    }
+
+    async function loadDownloadCounts() {
+        try {
+            const data = await api('/api/downloads', { auth: false });
+            for (const d of data.downloads) {
+                downloadCounts[d.version + ':' + d.format] = d.count;
+            }
+            renderCounts();
+        } catch {
+            console.warn('Счётчик скачиваний недоступен');
+        }
+    }
+
+    document.addEventListener('click', async (e) => {
+        const link = e.target.closest('.dl-link');
+        if (!link) return;
+        const version = link.getAttribute('data-version');
+        const format = link.getAttribute('data-format');
+        if (!version || !format) return;
+        try {
+            await api('/api/download/hit', {
+                method: 'POST',
+                body: { version, format },
+                auth: false
+            });
+            downloadCounts[version + ':' + format] = (downloadCounts[version + ':' + format] || 0) + 1;
+            renderCounts();
+        } catch {
+            console.warn('Не удалось зафиксировать скачивание');
+        }
+    });
+
+    loadDownloadCounts();
 })();

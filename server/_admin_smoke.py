@@ -119,6 +119,20 @@ def main():
         print("victim login after unban:", call_ip(
             "POST", "/api/login", {"name": "Victim", "password": "pass123"}, ip="9.9.9.9")[0])
         print("ban as user:", call("POST", "/api/admin/ban", {"ip": "9.9.9.9"})[0])
+
+        # --- Скачивания ---
+        print("downloads list:", call("GET", "/api/downloads"))
+        st, p = call("POST", "/api/download/hit", {"version": "v1.0", "format": "installer"}, token=None)
+        print("hit v1.0 installer:", st, p.get("count"))
+        st, p = call("POST", "/api/download/hit", {"version": "v1.0", "format": "installer"}, token=None)
+        print("hit dup from same IP (rate-limited):", st)
+        st, p = call("POST", "/api/download/hit", {"version": "v1.1", "format": "portable"}, token=None)
+        print("hit v1.1 portable:", st, p.get("count"))
+        st, p = call("GET", "/api/downloads")
+        for d in p.get("downloads", []):
+            print("  dl:", d["version"], d["format"], "→", d["count"])
+        st, p = call("POST", "/api/download/hit", {"version": "v99", "format": "installer"}, token=None)
+        print("bad version:", st, p.get("error"))
     finally:
         srv.terminate()
         try:

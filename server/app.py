@@ -65,6 +65,11 @@ SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
 
+# ------------------------------------------------------------------- скачивания
+DOWNLOAD_VERSIONS = ("v1.0", "v1.1")
+DOWNLOAD_FORMATS = ("installer", "portable", "source")
+download_hits: dict[tuple[str, str, str], int] = {}
+
 # ------------------------------------------------------------------- почта
 def send_email(to_email: str, subject: str, body: str) -> bool:
     """Отправить email через SMTP. Возвращает True при успехе."""
@@ -205,10 +210,26 @@ def db_init() -> None:
                 details    TEXT   NOT NULL DEFAULT '',
                 created_at BIGINT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS downloads (
+                id         {id_type},
+                version    TEXT   NOT NULL DEFAULT 'v1.0',
+                format     TEXT   NOT NULL DEFAULT 'installer',
+                count      INTEGER NOT NULL DEFAULT 0,
+                created_at BIGINT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_users_best   ON users(best DESC);
             """
         )
+        # Начальные записи для версий, если таблица пуста.
+        if conn.execute("SELECT COUNT(*) AS cnt FROM downloads").fetchone()["cnt"] == 0:
+            now = int(time.time())
+            for version in ("v1.0", "v1.1"):
+                for fmt in ("installer", "portable", "source"):
+                    conn.execute(
+                        "INSERT INTO downloads (version, format, count, created_at) VALUES (?, ?, 0, ?)",
+                        (version, fmt, now),
+                    )
         # Миграции для старых баз: колонки, добавленные после первого релиза.
         if DATABASE_URL:
             cols = {
@@ -623,6 +644,20 @@ class Handler(BaseHTTPRequestHandler):
                         ]
                     })
                 return
+            if path == "/api/downloads":
+                with db() as conn:
+                    rows = conn.execute(
+                        """SELECT version, format, count
+                           FROM downloads
+                           ORDER BY version DESC, format"""
+                    ).fetchall()
+                    self.send_json(200, {
+                        "downloads": [
+                            {"version": r["version"], "format": r["format"], "count": r["count"]}
+                            for r in rows
+                        ]
+                    })
+                return
             self.send_json(404, {"error": "Неизвестный метод API"})
         except ApiError as exc:
             self.send_json(exc.status, {"error": exc.message})
@@ -707,6 +742,35 @@ class Handler(BaseHTTPRequestHandler):
                 if token:
                     conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
             self.send_json(200, {"ok": True}, cookies=[self.clear_cookie()])
+            return
+
+        if path == "/api/download/hit":
+            # Счётчик скачиваний: не требует входа, по одному засчитыванию на IP в час.
+            data = self.read_json()
+            version = str(data.get("version") or "").strip()
+            fmt = str(data.get("format") or "").strip()
+            if version not in DOWNLOAD_VERSIONS or fmt not in DOWNLOAD_FORMATS:
+                raise ApiError(400, "Неизвестная версия или формат")
+            key = (ip, version, fmt)
+            now = int(time.time())
+            if download_hits.get(key, 0) > now - 3600:
+                raise ApiError(429, "Уже учтено")
+            download_hits[key] = now
+            with db() as conn:
+                row = conn.execute(
+                    "SELECT id, count FROM downloads WHERE version = ? AND format = ?",
+                    (version, fmt),
+                ).fetchone()
+                if not row:
+                    conn.execute(
+                        "INSERT INTO downloads (version, format, count, created_at) VALUES (?, ?, 1, ?)",
+                        (version, fmt, now),
+                    )
+                    count = 1
+                else:
+                    conn.execute("UPDATE downloads SET count = count + 1 WHERE id = ?", (row["id"],))
+                    count = row["count"] + 1
+            self.send_json(200, {"count": count})
             return
 
         if path == "/api/score":

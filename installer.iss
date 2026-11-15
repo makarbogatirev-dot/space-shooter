@@ -3,17 +3,17 @@
 ; ============================================================
 
 [Setup]
-AppId={{A3B2C1D4-E5F6-7890-ABCD-EF1234567890}
+AppId={{A3B2C1D4-E5F6-7890-ABCD-EF1234567891}
 AppName=Space Shooter
-AppVersion=1.0
+AppVersion=1.1.0
 AppPublisher=Space Shooter Team
-AppPublisherURL=https://example.com
-AppSupportURL=https://example.com
-AppUpdatesURL=https://example.com
+AppPublisherURL=https://github.com/makarbogatirev-dot/space-shooter
+AppSupportURL=https://github.com/makarbogatirev-dot/space-shooter
+AppUpdatesURL=https://github.com/makarbogatirev-dot/space-shooter/releases
 DefaultDirName={autopf}\Space Shooter
 DefaultGroupName=Space Shooter
 OutputDir=installer_output
-OutputBaseFilename=SpaceShooter_Setup_v1.0
+OutputBaseFilename=SpaceShooter_Setup_v1.1
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -35,11 +35,11 @@ Name: desktopicon; Description: "Создать ярлык на рабочем �
 
 [Files]
 ; Основной exe (с упакованными картинками)
-Source: "space_shuter v1.0\dist\SpaceShooter.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "space_shuter v1.1 beta\dist\SpaceShooter.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "installer_icon.ico"; DestDir: "{app}"; DestName: "space_shuter.ico"; Flags: ignoreversion
 
 ; Папка с исходниками (опционально — для разработчиков)
-; Source: "space_shuter v1.0\space_shuter.py"; DestDir: "{app}"; Flags: ignoreversion
+; Source: "space_shuter v1.1 beta\space_shuter.py"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Space Shooter"; Filename: "{app}\SpaceShooter.exe"; IconFilename: "{app}\space_shuter.ico"

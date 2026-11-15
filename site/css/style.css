@@ -1263,6 +1263,38 @@ img { max-width: 100%; display: block; }
     font-size: .9rem;
     line-height: 1.5;
 }
+.version-downloads {
+    display: flex;
+    gap: .6rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--clr-border);
+}
+.dl-count {
+    display: inline-block;
+    margin-left: .35rem;
+    font-size: .75rem;
+    opacity: .85;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.dl-count::before {
+    content: '· ';
+}
+.dl-count[data-empty="1"] { display: none; }
+.dl-ver-badge {
+    display: inline-block;
+    margin-left: .5rem;
+    font-size: .72rem;
+    font-weight: 700;
+    padding: .15rem .5rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, .18);
+    border: 1px solid rgba(255, 255, 255, .35);
+    vertical-align: middle;
+}
+.dl-link.is-off { pointer-events: none; opacity: .45; }
 
 /* --- Кнопки данных в профиле (GDPR) --- */
 .profile-data-actions {
