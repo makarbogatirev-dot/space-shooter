@@ -401,44 +401,86 @@
                     <div class="stat"><span class="stat-value" id="stat-kills">0</span><span class="stat-label">Метеоритов</span></div>
                 </div>
                 <p id="profile-rank" class="profile-rank"></p>
-                <div class="profile-section">
-                    <h4 class="profile-section-title">📧 Email для уведомлений</h4>
-                    <div class="email-row">
-                        <input type="email" id="profile-email" class="admin-search" placeholder="you@example.com" maxlength="200" autocomplete="email">
-                        <button id="email-save-btn" class="btn btn-secondary btn-small" type="button">Сохранить</button>
-                    </div>
-                    <p id="email-msg" class="form-error"></p>
+
+                <div class="auth-tabs profile-tabs" role="tablist">
+                    <button id="ptab-friends" class="auth-tab active" type="button" role="tab" aria-controls="psec-friends">👥 Друзья <span id="badge-friends" class="tab-badge hidden"></span></button>
+                    <button id="ptab-security" class="auth-tab" type="button" role="tab" aria-controls="psec-security">🔐 Безопасность</button>
+                    <button id="ptab-privacy" class="auth-tab" type="button" role="tab" aria-controls="psec-privacy">💻 Устройство</button>
                 </div>
-                <div class="profile-section">
-                    <h4 class="profile-section-title">👥 Друзья</h4>
+
+                <!-- Раздел: друзья и приглашения -->
+                <div id="psec-friends" class="profile-tab-panel">
+                    <div class="invite-tabs">
+                        <button id="itab-list" class="invite-tab active" type="button">Мои друзья</button>
+                        <button id="itab-in" class="invite-tab" type="button">Входящие <span id="badge-in" class="tab-badge hidden"></span></button>
+                        <button id="itab-out" class="invite-tab" type="button">Исходящие</button>
+                    </div>
                     <div class="email-row">
-                        <input type="text" id="friend-add" class="admin-search" placeholder="Ник друга" maxlength="20" autocomplete="off">
-                        <button id="friend-add-btn" class="btn btn-secondary btn-small" type="button">Добавить</button>
+                        <input type="text" id="friend-add" class="admin-search" placeholder="Ник для приглашения" maxlength="20" autocomplete="off">
+                        <button id="friend-add-btn" class="btn btn-secondary btn-small" type="button">Пригласить</button>
                     </div>
                     <p id="friend-msg" class="form-error"></p>
                     <ul id="friends-list" class="friends-list"></ul>
-                    <p id="friends-empty" class="friends-empty">Пока никого — добавь друга по нику и соревнуйся за рекорды</p>
+                    <p id="friends-empty" class="friends-empty">Пока никого — пригласи друга по нику и соревнуйся за рекорды</p>
+                    <ul id="invites-in" class="friends-list hidden"></ul>
+                    <p id="invites-in-empty" class="friends-empty hidden">Входящих приглашений нет</p>
+                    <ul id="invites-out" class="friends-list hidden"></ul>
+                    <p id="invites-out-empty" class="friends-empty hidden">Ты никому не писал — отправь приглашение выше</p>
                 </div>
-                <div class="profile-section">
-                    <h4 class="profile-section-title">🔐 Двухфакторная защита (2FA)</h4>
-                    <p class="profile-hint" id="tfa-state">Загрузка…</p>
-                    <div class="email-row">
-                        <input type="password" id="tfa-pass" placeholder="Пароль для подтверждения" autocomplete="current-password">
-                        <button id="tfa-toggle-btn" class="btn btn-secondary btn-small" type="button">Включить</button>
+
+                <!-- Раздел: безопасность -->
+                <div id="psec-security" class="profile-tab-panel hidden">
+                    <div class="profile-section">
+                        <h4 class="profile-section-title">📧 Email для уведомлений</h4>
+                        <p class="profile-hint" id="mail-note">Проверяем статус почты…</p>
+                        <div class="email-row">
+                            <input type="email" id="profile-email" class="admin-search" placeholder="you@example.com" maxlength="200" autocomplete="email">
+                            <button id="email-save-btn" class="btn btn-secondary btn-small" type="button">Сохранить</button>
+                        </div>
+                        <p id="email-msg" class="form-error"></p>
                     </div>
-                    <p id="tfa-settings-msg" class="form-error"></p>
+                    <div class="profile-section">
+                        <h4 class="profile-section-title">🔑 Смена пароля</h4>
+                        <label class="field"><span>Текущий пароль</span>
+                            <input type="password" id="pass-current" maxlength="200" autocomplete="current-password">
+                        </label>
+                        <label class="field"><span>Новый пароль (минимум 6 символов)</span>
+                            <input type="password" id="pass-new" minlength="6" maxlength="200" autocomplete="new-password">
+                        </label>
+                        <button id="pass-save-btn" class="btn btn-secondary btn-small" type="button">Сменить пароль</button>
+                        <p id="pass-msg" class="form-error"></p>
+                        <p class="profile-hint">Другие устройства будут разлогинены.</p>
+                    </div>
+                    <div class="profile-section">
+                        <h4 class="profile-section-title">🔐 Двухфакторная защита (2FA)</h4>
+                        <p class="profile-hint" id="tfa-state">Загрузка…</p>
+                        <div class="email-row">
+                            <input type="password" id="tfa-pass" placeholder="Пароль для подтверждения" autocomplete="current-password">
+                            <button id="tfa-toggle-btn" class="btn btn-secondary btn-small" type="button">Включить</button>
+                        </div>
+                        <p id="tfa-settings-msg" class="form-error"></p>
+                    </div>
                 </div>
-                <div class="profile-section">
-                    <h4 class="profile-section-title">💻 Устройства, где ты входе</h4>
-                    <button id="devices-toggle" class="devices-toggle" type="button">Показать устройства ▾</button>
-                    <ul id="devices-list" class="devices-list hidden"></ul>
+
+                <!-- Раздел: устройства и данные -->
+                <div id="psec-privacy" class="profile-tab-panel hidden">
+                    <div class="profile-section">
+                        <h4 class="profile-section-title">💻 Устройства, где ты входе</h4>
+                        <button id="devices-toggle" class="devices-toggle" type="button">Показать устройства ▾</button>
+                        <ul id="devices-list" class="devices-list hidden"></ul>
+                    </div>
+                    <div class="profile-section">
+                        <h4 class="profile-section-title">📦 Мои данные</h4>
+                        <p class="profile-hint">Выгрузить аккаунт в JSON или удалить его навсегда.</p>
+                        <div class="profile-data-actions">
+                            <button id="export-btn" class="btn btn-secondary btn-small" type="button">📥 Мои данные</button>
+                            <button id="delete-account-btn" class="btn btn-secondary btn-small" type="button">🗑 Удалить аккаунт</button>
+                        </div>
+                    </div>
                 </div>
+
                 <div class="profile-actions">
                     <button id="admin-btn" class="btn btn-primary btn-block hidden" type="button">🛠 Панель разработчика</button>
-                    <div class="profile-data-actions">
-                        <button id="export-btn" class="btn btn-secondary btn-small" type="button">📥 Мои данные</button>
-                        <button id="delete-account-btn" class="btn btn-secondary btn-small" type="button">🗑 Удалить аккаунт</button>
-                    </div>
                     <button id="logout-btn" class="btn btn-secondary" type="button">Выйти</button>
                 </div>
             </div>

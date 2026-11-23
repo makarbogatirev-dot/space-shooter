@@ -36,9 +36,12 @@ import sys
 import threading
 import time
 from email.mime.text import MIMEText
+from base64 import b64encode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import quote, unquote, urlparse, parse_qs
+from urllib.error import HTTPError
+from urllib.parse import quote, unquote, urlparse, parse_qs, urlencode
+from urllib.request import Request, urlopen
 
 BASE_DIR = Path(__file__).resolve().parent
 SITE_DIR = (BASE_DIR.parent / "site").resolve()
@@ -64,6 +67,13 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
+# Mailgun / Resend отправляют письма через HTTPS (порт 443). На бесплатном
+# тарифе Render исходящий трафик на SMTP-порты 25/465/587 заблокирован,
+# поэтому HTTP-API — единственный рабочий способ слать письма оттуда.
+MAILGUN_API_KEY = os.environ.get("MAILGUN_API_KEY", "")
+MAILGUN_DOMAIN = os.environ.get("MAILGUN_DOMAIN", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+MAIL_FROM = os.environ.get("MAIL_FROM", SMTP_FROM or "Space Shooter <no-reply@example.com>")
 # Тестовый режим: письма не отправляются, а печатаются в stdout сервера.
 SMTP_DRY_RUN = bool(os.environ.get("SMTP_DRY_RUN", ""))
 
@@ -73,13 +83,82 @@ DOWNLOAD_FORMATS = ("installer", "portable", "source")
 download_hits: dict[tuple[str, str, str], int] = {}
 
 # ------------------------------------------------------------------- почта
-def send_email(to_email: str, subject: str, body: str) -> bool:
-    """Отправить email через SMTP. Возвращает True при успехе."""
+def _post_form(url: str, headers: dict, fields: dict) -> tuple[int, str]:
+    """Отправить form-urlencoded по HTTPS; вернуть (код ответа, текст)."""
+    body = urlencode(fields).encode()
+    req = Request(url, data=body, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+    for key, value in headers.items():
+        req.add_header(key, value)
+    try:
+        with urlopen(req, timeout=15) as resp:
+            return resp.status, resp.read().decode(errors="replace")[:300]
+    except HTTPError as exc:
+        return exc.code, exc.read().decode(errors="replace")[:300]
+    except Exception as exc:  # noqa: BLE001
+        return 0, repr(exc)
+
+
+def _safe_print(*args, **kwargs):
+    """Print с fallback на ASCII — для Windows-консолей без UTF-8."""
+    try:
+        print(*args, **kwargs)
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        safe = [str(a).encode('ascii', 'replace').decode('ascii') for a in args]
+        print(*safe, **kwargs)
+
+
+def mail_status() -> str:
+    """Как настроена почта: mailgun | resend | smtp | dry_run | none."""
     if SMTP_DRY_RUN:
-        print(f"SMTP_DRY_RUN письмо -> {to_email} | {subject} | {body}", flush=True)
+        return "dry_run"
+    if MAILGUN_API_KEY and MAILGUN_DOMAIN:
+        return "mailgun"
+    if RESEND_API_KEY:
+        return "resend"
+    if SMTP_USER and SMTP_PASS:
+        return "smtp"
+    return "none"
+
+
+def send_email(to_email: str, subject: str, body: str) -> bool:
+    """Отправить email (HTTP-API → SMTP). Возвращает True при успехе."""
+    if SMTP_DRY_RUN:
+        _safe_print(f"SMTP_DRY_RUN письмо -> {to_email} | {subject} | {body}", flush=True)
         return True
+    # 1) Mailgun через HTTPS — работает на Render Free (SMTP-порты там закрыты).
+    if MAILGUN_API_KEY and MAILGUN_DOMAIN:
+        status, text = _post_form(
+            f"https://api.mailgun.net/v3/{MAILGUN_DOMAIN}/messages",
+            {"Authorization": "Basic " + b64encode(("api:" + MAILGUN_API_KEY).encode()).decode()},
+            {"from": MAIL_FROM, "to": to_email, "subject": subject, "text": body},
+        )
+        if 200 <= status < 300:
+            _safe_print("Письмо отправлено (mailgun):", to_email, flush=True)
+            return True
+        _safe_print(f"Mailgun ошибка {status}: {text}", flush=True)
+        return False
+    # 2) Resend через HTTPS.
+    if RESEND_API_KEY:
+        payload = json.dumps({"from": MAIL_FROM, "to": [to_email],
+                              "subject": subject, "text": body}).encode()
+        req = Request("https://api.resend.com/emails", data=payload, method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Authorization", "Bearer " + RESEND_API_KEY)
+        try:
+            with urlopen(req, timeout=15) as resp:
+                if 200 <= resp.status < 300:
+                    _safe_print("Письмо отправлено (resend):", to_email, flush=True)
+                    return True
+        except HTTPError as exc:
+            _safe_print(f"Resend ошибка {exc.code}: {exc.read().decode(errors='replace')[:300]}", flush=True)
+            return False
+        except Exception as exc:  # noqa: BLE001
+            _safe_print("Resend ошибка:", repr(exc), flush=True)
+            return False
+    # 3) Классический SMTP (работает локально и на платных тарифах хостинга).
     if not SMTP_USER or not SMTP_PASS:
-        print("SMTP не настроен — письмо не отправлено:", to_email, subject)
+        _safe_print("SMTP не настроен — письмо не отправлено:", to_email, subject, flush=True)
         return False
     try:
         msg = MIMEText(body, "plain", "utf-8")
@@ -93,10 +172,10 @@ def send_email(to_email: str, subject: str, body: str) -> bool:
             server.ehlo()
             server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(SMTP_FROM, to_email, msg.as_string())
-        print("Письмо отправлено:", to_email)
+        _safe_print("Письмо отправлено:", to_email, flush=True)
         return True
-    except Exception as exc:
-        print("Ошибка отправки письма:", exc)
+    except Exception as exc:  # noqa: BLE001
+        _safe_print("Ошибка отправки письма:", repr(exc), flush=True)
         return False
 
 # Права разработчика выдаются по нику, а не по флагу в базе: так их нельзя
@@ -300,6 +379,13 @@ def db_init() -> None:
                 created_at BIGINT NOT NULL,
                 PRIMARY KEY (user_id, friend_id)
             );
+            CREATE TABLE IF NOT EXISTS friend_invites (
+                id         {id_type},
+                from_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                to_id      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at BIGINT NOT NULL,
+                UNIQUE (from_id, to_id)
+            );
             CREATE TABLE IF NOT EXISTS admin_logs (
                 id         {id_type},
                 admin_name TEXT   NOT NULL,
@@ -474,6 +560,23 @@ def user_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         {"name": r["name"], "best": r["best"], "avatar": r["avatar"]}
         for r in friend_rows
     ]
+    # Приглашения: входящие (нужно ответить) и исходящие (ждут ответа).
+    invites_in = conn.execute(
+        """SELECT u.name, u.best, u.avatar, i.created_at * 1000 AS created
+           FROM friend_invites i JOIN users u ON u.id = i.from_id
+           WHERE i.to_id = ? ORDER BY i.id DESC""",
+        (row["id"],),
+    ).fetchall()
+    invites_out = conn.execute(
+        """SELECT u.name, u.best, u.avatar, i.created_at * 1000 AS created
+           FROM friend_invites i JOIN users u ON u.id = i.to_id
+           WHERE i.from_id = ? ORDER BY i.id DESC""",
+        (row["id"],),
+    ).fetchall()
+    unread = conn.execute(
+        "SELECT COUNT(*) AS c FROM messages WHERE to_id = ? AND read = 0",
+        (row["id"],),
+    ).fetchone()["c"]
     return {
         "name": row["name"],
         "created": row["created_at"] * 1000,
@@ -486,6 +589,9 @@ def user_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "avatar": row["avatar"],
         "email": row["email"] if "email" in row.keys() else None,
         "friends": friends,
+        "invites_in": [dict(r) for r in invites_in],
+        "invites_out": [dict(r) for r in invites_out],
+        "unread": unread,
     }
 
 
@@ -790,6 +896,11 @@ class Handler(BaseHTTPRequestHandler):
                     row = self.require_user(conn)
                     self.send_json(200, {"enabled": tfa_enabled(conn, row["id"])})
                 return
+            if path == "/api/mail/status":
+                # Публичный флаг: настроена ли отправка писем (для подсказок в UI).
+                status = mail_status()
+                self.send_json(200, {"mail": status, "ready": status != "none"})
+                return
             if path == "/api/admin/users":
                 with db() as conn:
                     self.require_admin(conn)
@@ -1086,7 +1197,48 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json(200, {"user": user_payload(conn, row)})
             return
 
+        if path == "/api/me/password":
+            # Смена собственного пароля: текущий пароль обязателен,
+            # остальные сессии завершаются, текущая остаётся.
+            data = self.read_json()
+            current = str(data.get("current") or "")
+            new_pass = str(data.get("new") or "")
+            if len(new_pass) < 6 or len(new_pass) > 200:
+                raise ApiError(400, "Новый пароль: минимум 6 символов")
+            with db() as conn:
+                row = self.require_user(conn)
+                if not verify_password(current, row["pass_hash"]):
+                    raise ApiError(401, "Текущий пароль неверен")
+                if current == new_pass:
+                    raise ApiError(400, "Новый пароль совпадает с текущим")
+                conn.execute(
+                    "UPDATE users SET pass_hash = ? WHERE id = ?",
+                    (hash_password(new_pass), row["id"]),
+                )
+                keep = self.session_token()
+                if keep:
+                    conn.execute(
+                        "DELETE FROM sessions WHERE user_id = ? AND token <> ?",
+                        (row["id"], keep),
+                    )
+                else:
+                    conn.execute("DELETE FROM sessions WHERE user_id = ?", (row["id"],))
+                email = row["email"] if "email" in row.keys() else None
+                notified = False
+                if email:
+                    notified = send_email(
+                        email,
+                        "Пароль в Space Shooter изменён 🔑",
+                        f"Привет, {row['name']}!\n\n"
+                        "Твой пароль был изменён. Все остальные устройства разлогинены.\n"
+                        "Если это был не ты — срочно смени пароль ещё раз или напиши разработчику.\n",
+                    )
+                row = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
+                self.send_json(200, {"user": user_payload(conn, row), "notified": notified})
+            return
+
         if path == "/api/friends/add":
+            # Отправляет приглашение в друзья (прямое добавление убрано).
             data = self.read_json()
             target = str(data.get("target") or "").strip().lower()
             if not target:
@@ -1105,16 +1257,85 @@ class Handler(BaseHTTPRequestHandler):
                     (me["id"], friend["id"]),
                 ).fetchone():
                     raise ApiError(409, "Уже в друзьях")
+                if conn.execute(
+                    """SELECT 1 FROM friend_invites
+                       WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)""",
+                    (me["id"], friend["id"], friend["id"], me["id"]),
+                ).fetchone():
+                    raise ApiError(409, "Приглашение уже отправлено")
+                conn.execute(
+                    "INSERT INTO friend_invites (from_id, to_id, created_at) VALUES (?, ?, ?)",
+                    (me["id"], friend["id"], int(time.time())),
+                )
+            self.send_json(200, {"ok": True, "invited": True})
+            return
+
+        if path == "/api/friends/invite/accept":
+            data = self.read_json()
+            target = str(data.get("target") or "").strip().lower()
+            if not target:
+                raise ApiError(400, "Укажите ник игрока")
+            with db() as conn:
+                me = self.require_user(conn)
+                peer = conn.execute(
+                    """SELECT u.id FROM friend_invites i JOIN users u ON u.id = i.from_id
+                       WHERE i.to_id = ? AND u.name_key = ?""",
+                    (me["id"], target),
+                ).fetchone()
+                if not peer:
+                    raise ApiError(404, "Приглашение не найдено")
                 now = int(time.time())
                 # Дружба взаимная: одна запись на каждое направление.
                 conn.execute(
-                    "INSERT INTO friends (user_id, friend_id, created_at) VALUES (?, ?, ?)",
-                    (me["id"], friend["id"], now),
+                    """INSERT INTO friends (user_id, friend_id, created_at) VALUES (?, ?, ?)
+                       ON CONFLICT(user_id, friend_id) DO NOTHING""",
+                    (me["id"], peer["id"], now),
                 )
                 conn.execute(
-                    "INSERT INTO friends (user_id, friend_id, created_at) VALUES (?, ?, ?)",
-                    (friend["id"], me["id"], now),
+                    """INSERT INTO friends (user_id, friend_id, created_at) VALUES (?, ?, ?)
+                       ON CONFLICT(user_id, friend_id) DO NOTHING""",
+                    (peer["id"], me["id"], now),
                 )
+                conn.execute(
+                    """DELETE FROM friend_invites
+                       WHERE (from_id = ? AND to_id = ?) OR (from_id = ? AND to_id = ?)""",
+                    (peer["id"], me["id"], me["id"], peer["id"]),
+                )
+            self.send_json(200, {"ok": True})
+            return
+
+        if path == "/api/friends/invite/decline":
+            data = self.read_json()
+            target = str(data.get("target") or "").strip().lower()
+            if not target:
+                raise ApiError(400, "Укажите ник игрока")
+            with db() as conn:
+                me = self.require_user(conn)
+                cur = conn.execute(
+                    """DELETE FROM friend_invites
+                       WHERE to_id = ? AND from_id = (SELECT id FROM users WHERE name_key = ?)""",
+                    (me["id"], target),
+                )
+                if cur.rowcount == 0:
+                    raise ApiError(404, "Приглашение не найдено")
+            self.send_json(200, {"ok": True})
+            return
+
+        if path == "/api/friends/invite/cancel":
+            # отзыв отправленного приглашения
+            data = self.read_json()
+            target = str(data.get("target") or "").strip().lower()
+            if not target:
+                raise ApiError(400, "Укажите ник игрока")
+            with db() as conn:
+                me = self.require_user(conn)
+                cur = conn.execute(
+                    """DELETE FROM friend_invites
+                       WHERE from_id = ? AND to_id = (SELECT id FROM users WHERE name_key = ?)""",
+                    (me["id"], target),
+                )
+                if cur.rowcount == 0:
+                    raise ApiError(404, "Приглашение не найдено")
             self.send_json(200, {"ok": True})
             return
 

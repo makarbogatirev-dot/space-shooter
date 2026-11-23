@@ -172,13 +172,26 @@ def main():
         print("login after disable:", st)
         alice_token = presp.get("token")
 
-        # --- Сообщения друзьям ---
+        # --- Приглашения в друзья + сообщения ---
         st, presp = call_ip("POST", "/api/login", {"name": "Victim", "password": "pass123"}, ip="8.8.8.8")
         vict = presp.get("token")
         print("alice->victim not friend:", call("POST", "/api/messages/send",
               {"target": "victim", "text": "privet"}, token=alice_token))
-        print("victim add alice:", call("POST", "/api/friends/add",
+        print("victim invite alice:", call("POST", "/api/friends/add",
                                         {"target": "alice"}, token=vict))
+        print("invite dup:", call("POST", "/api/friends/add",
+                                  {"target": "alice"}, token=vict)[0])
+        print("invite self:", call("POST", "/api/friends/add",
+                                   {"target": "victim"}, token=vict)[0])
+        st, p = call("GET", "/api/me", token=alice_token)
+        print("alice invites_in:", [i["name"] for i in p["user"].get("invites_in", [])])
+        print("accept unknown:", call("POST", "/api/friends/invite/accept",
+                                      {"target": "NoSuchUser"}, token=alice_token)[0])
+        print("alice accept:", call("POST", "/api/friends/invite/accept",
+                                    {"target": "victim"}, token=alice_token))
+        st, p = call("GET", "/api/me", token=alice_token)
+        print("alice friends:", [f["name"] for f in p["user"]["friends"]],
+              "invites_in now:", len(p["user"].get("invites_in", [])))
         print("alice send:", call("POST", "/api/messages/send",
                                   {"target": "victim", "text": "privet!"}, token=alice_token))
         print("victim read:", call("GET", "/api/messages?with=Alice", token=vict))
@@ -189,6 +202,32 @@ def main():
         print("unread after read:", p.get("unread"))
         print("send too long:", call("POST", "/api/messages/send",
                                      {"target": "victim", "text": "x" * 1001}, token=alice_token)[0])
+        # отзыв приглашения: alice приглашает dev, потом отзывает
+        print("alice invite dev:", call("POST", "/api/friends/add",
+                                        {"target": "devqa"}, token=alice_token)[0])
+        st, p = call("GET", "/api/me", token=alice_token)
+        print("alice invites_out:", [i["name"] for i in p["user"].get("invites_out", [])])
+        print("alice cancel invite:", call("POST", "/api/friends/invite/cancel",
+                                            {"target": "devqa"}, token=alice_token)[0])
+        print("cancel again 404:", call("POST", "/api/friends/invite/cancel",
+                                        {"target": "devqa"}, token=alice_token)[0])
+
+        # --- Смена собственного пароля ---
+        print("pass wrong current:", call("POST", "/api/me/password",
+              {"current": "bad", "new": "newpass1"}, token=alice_token)[0])
+        print("pass too short:", call("POST", "/api/me/password",
+              {"current": "alicepw1", "new": "abc"}, token=alice_token)[0])
+        print("pass same:", call("POST", "/api/me/password",
+              {"current": "alicepw1", "new": "alicepw1"}, token=alice_token)[0])
+        print("pass change:", call("POST", "/api/me/password",
+              {"current": "alicepw1", "new": "alicepw2"}, token=alice_token)[0])
+        print("login old pass:", call_ip("POST", "/api/login",
+              {"name": "Alice", "password": "alicepw1"}, ip="7.7.7.7")[0])
+        print("login new pass:", call_ip("POST", "/api/login",
+              {"name": "Alice", "password": "alicepw2"}, ip="7.7.7.7")[0])
+
+        # --- Статус почты ---
+        print("mail status:", call("GET", "/api/mail/status"))
 
         # --- Назначение админ-прав ---
         st, p = call("GET", "/api/admin/users", token=at)

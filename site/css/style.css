@@ -1305,6 +1305,78 @@ img { max-width: 100%; display: block; }
     flex-wrap: wrap;
 }
 
+/* --- Табы разделов профиля --- */
+.profile-tabs { margin-bottom: 1.1rem; }
+.profile-tabs .auth-tab {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: .35rem;
+    font-size: .85rem;
+    padding: .5rem .35rem;
+}
+.profile-tab-panel.hidden { display: none; }
+.tab-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: #ff4466;
+    color: #fff;
+    font-size: .7rem;
+    font-weight: 700;
+    line-height: 1;
+}
+.tab-badge.hidden { display: none; }
+.auth-tab.active .tab-badge { background: #fff; color: var(--clr-accent); }
+
+/* --- Подтабы приглашений --- */
+.invite-tabs {
+    display: flex;
+    gap: .3rem;
+    margin-bottom: .8rem;
+    border-bottom: 1px solid var(--clr-border);
+}
+.invite-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--clr-text-dim);
+    font-family: var(--font-main);
+    font-size: .85rem;
+    font-weight: 600;
+    padding: .45rem .6rem;
+    cursor: pointer;
+    transition: color var(--transition), border-color var(--transition);
+}
+.invite-tab:hover { color: var(--clr-text); }
+.invite-tab.active {
+    color: var(--clr-accent);
+    border-bottom-color: var(--clr-accent);
+}
+.invite-tab .tab-badge { background: #ff4466; }
+.invite-list-empty { margin-top: .5rem; }
+.invite-pending { color: var(--clr-text-dim); font-size: .78rem; }
+.invite-accept, .invite-decline, .invite-cancel {
+    background: none;
+    border: 1px solid var(--clr-border);
+    border-radius: 6px;
+    color: var(--clr-text);
+    cursor: pointer;
+    font-family: var(--font-main);
+    font-size: .75rem;
+    padding: .18rem .5rem;
+    transition: all var(--transition);
+}
+.invite-accept:hover { border-color: #00cc88; color: #00cc88; }
+.invite-decline:hover, .invite-cancel:hover { border-color: #ff4466; color: #ff4466; }
+
 /* --- Секции профиля: email, друзья, устройства --- */
 .profile-section {
     margin: 1rem 0;

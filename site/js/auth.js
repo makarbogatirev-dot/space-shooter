@@ -938,15 +938,21 @@
        ============================================ */
     const tfaModal = document.getElementById('tfa-modal');
     let tfaPending = '';
+    let tfaMode = 'login';   // login — вход в аккаунт, enable — включение 2FA
+    let tfaDone = null;      // колбэк после успешного подтверждения
 
-    function openTfaModal(pending, emailMasked) {
+    function openTfaModal(pending, emailMasked, mode, onDone) {
         if (!tfaModal) return;
         tfaPending = pending;
+        tfaMode = mode || 'login';
+        tfaDone = onDone || null;
+        document.getElementById('tfa-title').textContent =
+            tfaMode === 'enable' ? '🔐 Подтверждение 2FA' : '🔐 Подтверждение входа';
         document.getElementById('tfa-email').textContent =
             'Мы отправили 6-значный код на ' + emailMasked + '. Проверь входящие и спам.';
         document.getElementById('tfa-code').value = '';
         document.getElementById('tfa-msg').textContent = '';
-        modal.classList.add('hidden');               // прячем модалку входа
+        if (tfaMode === 'login') modal.classList.add('hidden');  // прячем модалку входа
         tfaModal.classList.remove('hidden');
         document.body.style.overflow = 'hidden';
         document.getElementById('tfa-code').focus();
@@ -956,7 +962,7 @@
         if (!tfaModal) return;
         tfaModal.classList.add('hidden');
         document.body.style.overflow = '';
-        modal.classList.remove('hidden');            // возвращаемся к форме входа
+        if (tfaMode === 'login') modal.classList.remove('hidden');  // возвращаемся к форме входа
     }
 
     if (tfaModal) {
@@ -970,16 +976,26 @@
             if (!/^\d{6}$/.test(code)) { msg.textContent = 'Введите 6-значный код из письма'; return; }
             const btn = document.getElementById('tfa-submit');
             btn.disabled = true; btn.textContent = 'Проверяем…';
+            const path = tfaMode === 'enable' ? '/api/tfa/confirm' : '/api/tfa/verify';
+            const auth = tfaMode === 'enable';
             try {
-                const data = await api('/api/tfa/verify', {
-                    method: 'POST', body: { pending_token: tfaPending, code }, auth: false
+                const data = await api(path, {
+                    method: 'POST',
+                    body: { pending_token: tfaPending, code },
+                    auth
                 });
-                setToken(data.token);
-                user = data.user;
-                closeTfaModal();
-                closeModal();
-                refreshUI();
-                updateLeaderboard();
+                const done = tfaDone;
+                if (tfaMode === 'login') {
+                    setToken(data.token);
+                    user = data.user;
+                    closeTfaModal();
+                    closeModal();
+                    refreshUI();
+                    updateLeaderboard();
+                } else {
+                    closeTfaModal();
+                    if (done) done(data);
+                }
             } catch (err) {
                 msg.textContent = err.message;
             } finally {
@@ -991,6 +1007,92 @@
             if (e.key === 'Enter') document.getElementById('tfa-submit').click();
         });
     }
+
+    /* ============================================
+       Табы разделов профиля
+       ============================================ */
+    (function profileTabs() {
+        const tabs = [
+            ['ptab-friends', 'psec-friends'],
+            ['ptab-security', 'psec-security'],
+            ['ptab-privacy', 'psec-privacy']
+        ];
+        const btns = tabs.map(([id]) => document.getElementById(id));
+        if (!btns[0]) return;
+        tabs.forEach(([tabId, panelId], i) => {
+            btns[i].addEventListener('click', () => {
+                btns.forEach(b => b.classList.remove('active'));
+                btns[i].classList.add('active');
+                tabs.forEach(([, pid], j) => {
+                    document.getElementById(pid).classList.toggle('hidden', j !== i);
+                });
+            });
+        });
+    })();
+
+    /* ============================================
+       Смена пароля в профиле
+       ============================================ */
+    (function passwordSection() {
+        const curInput = document.getElementById('pass-current');
+        const newInput = document.getElementById('pass-new');
+        const saveBtn = document.getElementById('pass-save-btn');
+        const msgEl = document.getElementById('pass-msg');
+        if (!curInput || !saveBtn) return;
+
+        async function submit() {
+            msgEl.textContent = '';
+            msgEl.style.color = '';
+            const current = curInput.value;
+            const next = newInput.value;
+            if (!current) { msgEl.textContent = 'Введи текущий пароль'; return; }
+            if (next.length < 6) { msgEl.textContent = 'Новый пароль: минимум 6 символов'; return; }
+            saveBtn.disabled = true;
+            try {
+                await api('/api/me/password', {
+                    method: 'POST', body: { current, new: next }, auth: true
+                });
+                curInput.value = '';
+                newInput.value = '';
+                msgEl.textContent = 'Пароль изменён ✓ (другие устройства разлогинены)';
+                msgEl.style.color = '#00cc88';
+                setTimeout(() => { msgEl.textContent = ''; msgEl.style.color = ''; }, 4000);
+            } catch (err) {
+                msgEl.textContent = err.message;
+            } finally {
+                saveBtn.disabled = false;
+            }
+        }
+
+        saveBtn.addEventListener('click', submit);
+        newInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+    })();
+
+    /* ============================================
+       Статус почты
+       ============================================ */
+    (function mailStatus() {
+        const note = document.getElementById('mail-note');
+        if (!note) return;
+        async function load() {
+            try {
+                const data = await api('/api/mail/status', { auth: false });
+                const labels = {
+                    dry_run: '🧪 Тестовый режим (Dry Run)',
+                    mailgun: '✅ Почта через Mailgun',
+                    resend: '✅ Почта через Resend',
+                    smtp: '✅ Почта через SMTP',
+                    none: '⚠️ Почта не настроена — код 2FA не придёт'
+                };
+                note.textContent = labels[data.mail] || labels[data.mail];
+                note.style.color = data.ready ? 'var(--clr-text)' : '#ffaa00';
+            } catch {
+                note.textContent = '⚠️ Почта не настроена — код 2FA не придёт';
+                note.style.color = '#ffaa00';
+            }
+        }
+        load();
+    })();
 
     /* ============================================
        Email в профиле
@@ -1064,18 +1166,14 @@
                     await loadStatus();
                 } else {
                     const data = await api('/api/tfa/enable', { method: 'POST', body: { password }, auth: true });
-                    const code = prompt('Введи 6-значный код из письма на ' + data.email + ':');
-                    if (code && /^\d{6}$/.test(code.trim())) {
-                        await api('/api/tfa/confirm', {
-                            method: 'POST',
-                            body: { pending_token: data.pending_token, code: code.trim() },
-                            auth: true
-                        });
+                    // Код подтверждается в модалке, а не через prompt.
+                    openTfaModal(data.pending_token, data.email, 'enable', async () => {
                         passInput.value = '';
+                        msgEl.textContent = '2FA включена ✓';
+                        msgEl.style.color = '#00cc88';
+                        setTimeout(() => { msgEl.textContent = ''; msgEl.style.color = ''; }, 3000);
                         await loadStatus();
-                    } else {
-                        msgEl.textContent = 'Включение отменено — код не введён';
-                    }
+                    });
                 }
             } catch (err) {
                 msgEl.textContent = err.message;
@@ -1103,32 +1201,83 @@
         const listEl = document.getElementById('friends-list');
         const emptyEl = document.getElementById('friends-empty');
         const msgEl = document.getElementById('friend-msg');
+        const inEl = document.getElementById('invites-in');
+        const inEmpty = document.getElementById('invites-in-empty');
+        const outEl = document.getElementById('invites-out');
+        const outEmpty = document.getElementById('invites-out-empty');
         if (!addInput || !addBtn || !listEl) return;
 
-        function renderFriends() {
+        let tab = 'list';   // list | in | out
+
+        function friendRow(f, buttons) {
+            const clr = avatarColor(f.name, f.avatar);
+            return '<li>' +
+                '<span class="friend-avatar" style="background:' + clr + '">' +
+                escHtml(f.name[0].toUpperCase()) + '</span>' +
+                '<span class="friend-name">' + escHtml(f.name) + '</span>' +
+                '<span class="friend-best">🏆 ' + f.best + '</span>' +
+                buttons + '</li>';
+        }
+
+        function render() {
             const friends = (user && user.friends) || [];
-            listEl.innerHTML = '';
-            emptyEl.classList.toggle('hidden', friends.length > 0);
-            for (const f of friends) {
-                const li = document.createElement('li');
-                const clr = avatarColor(f.name, f.avatar);
-                li.innerHTML =
-                    '<span class="friend-avatar" style="background:' + clr + '">' +
-                    escHtml(f.name[0].toUpperCase()) + '</span>' +
-                    '<span class="friend-name">' + escHtml(f.name) + '</span>' +
-                    '<span class="friend-best">🏆 ' + f.best + '</span>' +
-                    '<button class="friend-chat" data-friend="' + escHtml(f.name) +
-                    '" type="button" title="Написать">✉</button>' +
-                    '<button class="friend-remove" data-friend="' + escHtml(f.name) +
-                    '" type="button" title="Удалить из друзей">✕</button>';
-                listEl.appendChild(li);
+            const invIn = (user && user.invites_in) || [];
+            const invOut = (user && user.invites_out) || [];
+            // Счётчик на табаке раздела и на подтабе входящих.
+            const badge = document.getElementById('badge-friends');
+            const badgeIn = document.getElementById('badge-in');
+            const pending = invIn.length;
+            if (badge) {
+                const total = pending + ((user && user.unread) || 0);
+                badge.textContent = String(total);
+                badge.classList.toggle('hidden', total === 0);
             }
+            if (badgeIn) {
+                badgeIn.textContent = String(pending);
+                badgeIn.classList.toggle('hidden', pending === 0);
+            }
+            listEl.innerHTML = friends.map(f => friendRow(f,
+                '<button class="friend-chat" data-friend="' + escHtml(f.name) +
+                '" type="button" title="Написать">✉</button>' +
+                '<button class="friend-remove" data-friend="' + escHtml(f.name) +
+                '" type="button" title="Удалить из друзей">✕</button>'
+            )).join('');
+            inEl.innerHTML = invIn.map(f => friendRow(f,
+                '<button class="invite-accept" data-friend="' + escHtml(f.name) +
+                '" type="button">Принять</button>' +
+                '<button class="invite-decline" data-friend="' + escHtml(f.name) +
+                '" type="button">Отклонить</button>'
+            )).join('');
+            outEl.innerHTML = invOut.map(f => friendRow(f,
+                '<span class="invite-pending">ждёт ответа</span>' +
+                '<button class="invite-decline" data-friend="' + escHtml(f.name) +
+                '" type="button">Отозвать</button>'
+            )).join('');
+            emptyEl.classList.toggle('hidden', tab !== 'list' || friends.length > 0);
+            inEmpty.classList.toggle('hidden', tab !== 'in' || invIn.length > 0);
+            outEmpty.classList.toggle('hidden', tab !== 'out' || invOut.length > 0);
+            for (const [el, on] of [[listEl, tab === 'list'], [inEl, tab === 'in'], [outEl, tab === 'out']])
+                el.classList.toggle('hidden', !on);
+            for (const [id, on] of [['itab-list', tab === 'list'], ['itab-in', tab === 'in'], ['itab-out', tab === 'out']])
+                document.getElementById(id).classList.toggle('active', on);
         }
 
         async function reloadMe() {
             const data = await api('/api/me', { auth: true });
             user = data.user;
             refreshUI();
+        }
+
+        async function inviteAction(endpoint, name, btn) {
+            msgEl.textContent = '';
+            if (btn) btn.disabled = true;
+            try {
+                await api(endpoint, { method: 'POST', body: { target: name.toLowerCase() }, auth: true });
+                await reloadMe();
+            } catch (err) {
+                msgEl.textContent = err.message;
+                if (btn) btn.disabled = false;
+            }
         }
 
         addBtn.addEventListener('click', async () => {
@@ -1140,6 +1289,9 @@
             try {
                 await api('/api/friends/add', { method: 'POST', body: { target }, auth: true });
                 addInput.value = '';
+                msgEl.style.color = '#00cc88';
+                msgEl.textContent = 'Приглашение отправлено ✓';
+                setTimeout(() => { msgEl.textContent = ''; msgEl.style.color = ''; }, 3000);
                 await reloadMe();
             } catch (err) {
                 msgEl.textContent = err.message;
@@ -1148,24 +1300,28 @@
             }
         });
 
-        listEl.addEventListener('click', async (e) => {
-            const removeBtn = e.target.closest('.friend-remove');
-            if (removeBtn) {
-                const target = removeBtn.getAttribute('data-friend').toLowerCase();
-                try {
-                    await api('/api/friends/remove', { method: 'POST', body: { target }, auth: true });
-                    await reloadMe();
-                } catch (err) {
-                    msgEl.textContent = err.message;
-                }
-                return;
+        for (const [id, key] of [['itab-list', 'list'], ['itab-in', 'in'], ['itab-out', 'out']]) {
+            document.getElementById(id).addEventListener('click', () => { tab = key; render(); });
+        }
+
+        const panel = document.getElementById('psec-friends');
+        panel.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.friend-remove, .friend-chat, .invite-accept, .invite-decline');
+            if (!btn) return;
+            const name = btn.getAttribute('data-friend');
+            if (btn.classList.contains('friend-remove')) return inviteAction('/api/friends/remove', name, btn);
+            if (btn.classList.contains('friend-chat')) return openChat(name);
+            if (btn.classList.contains('invite-accept')) return inviteAction('/api/friends/invite/accept', name, btn);
+            // Отозвать исходящее можно только у себя: удаляем через decline от имени автора.
+            if (btn.classList.contains('invite-decline')) {
+                const isOutgoing = tab === 'out';
+                if (isOutgoing) return inviteAction('/api/friends/invite/cancel', name, btn);
+                return inviteAction('/api/friends/invite/decline', name, btn);
             }
-            const chatBtn = e.target.closest('.friend-chat');
-            if (chatBtn) openChat(chatBtn.getAttribute('data-friend'));
         });
 
-        document.addEventListener('ss:auth', renderFriends);
-        renderFriends();
+        document.addEventListener('ss:auth', render);
+        render();
     })();
 
     /* ============================================
