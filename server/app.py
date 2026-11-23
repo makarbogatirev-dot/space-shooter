@@ -64,6 +64,8 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASS = os.environ.get("SMTP_PASS", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", SMTP_USER)
+# Тестовый режим: письма не отправляются, а печатаются в stdout сервера.
+SMTP_DRY_RUN = bool(os.environ.get("SMTP_DRY_RUN", ""))
 
 # ------------------------------------------------------------------- скачивания
 DOWNLOAD_VERSIONS = ("v1.0", "v1.1")
@@ -73,6 +75,9 @@ download_hits: dict[tuple[str, str, str], int] = {}
 # ------------------------------------------------------------------- почта
 def send_email(to_email: str, subject: str, body: str) -> bool:
     """Отправить email через SMTP. Возвращает True при успехе."""
+    if SMTP_DRY_RUN:
+        print(f"SMTP_DRY_RUN письмо -> {to_email} | {subject} | {body}", flush=True)
+        return True
     if not SMTP_USER or not SMTP_PASS:
         print("SMTP не настроен — письмо не отправлено:", to_email, subject)
         return False
@@ -105,6 +110,97 @@ ADMIN_NAMES = {
 
 def is_admin(name: str) -> bool:
     return name.lower() in ADMIN_NAMES
+
+
+def is_admin_row(conn, row) -> bool:
+    """Разработчик — из ADMIN_NAMES или назначенный через admin_rights."""
+    if row["name"].lower() in ADMIN_NAMES:
+        return True
+    return conn.execute(
+        "SELECT 1 FROM admin_rights WHERE user_id = ?", (row["id"],)
+    ).fetchone() is not None
+
+
+def mask_email(email: str) -> str:
+    """a***@d***n.com — чтобы не светить чужой email целиком."""
+    if not email or "@" not in email:
+        return "—"
+    local, _, domain = email.partition("@")
+    head = local[0] + "***" if len(local) > 1 else "***"
+    return f"{head}@{domain}"
+
+
+# ------------------------------------------------------------------- 2FA
+TFA_CODE_TTL = 10 * 60      # код живёт 10 минут
+TFA_MAX_ATTEMPTS = 5
+
+
+def tfa_enabled(conn, user_id: int) -> bool:
+    row = conn.execute(
+        "SELECT enabled FROM tfa WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    return bool(row and row["enabled"])
+
+
+def issue_tfa_code(conn, row) -> tuple[str, str]:
+    """Генерирует 6-значный код, сохраняет хэш, создаёт pending-токен и шлёт письмо.
+
+    Возвращает (pending_token, замаскированный email)."""
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    pending = secrets.token_urlsafe(24)
+    now = int(time.time())
+    code_hash = hash_password(code)
+    # upsert: ON CONFLICT работает и в SQLite (3.24+), и в PostgreSQL.
+    existing = conn.execute(
+        "SELECT enabled FROM tfa WHERE user_id = ?", (row["id"],)
+    ).fetchone()
+    enabled = existing["enabled"] if existing else 1
+    conn.execute(
+        """INSERT INTO tfa (user_id, enabled, code_hash, code_expires, code_attempts, pending_token)
+           VALUES (?, ?, ?, ?, 0, ?)
+           ON CONFLICT(user_id) DO UPDATE SET
+               code_hash = excluded.code_hash,
+               code_expires = excluded.code_expires,
+               code_attempts = 0,
+               pending_token = excluded.pending_token""",
+        (row["id"], enabled, code_hash, now + TFA_CODE_TTL, pending),
+    )
+    email = row["email"] if "email" in row.keys() else None
+    sent = email and send_email(
+        email,
+        "Код входа в Space Shooter 🔐",
+        f"Привет, {row['name']}!\n\n"
+        f"Твой код подтверждения входа: {code}\n"
+        "Код действует 10 минут. Если ты не входил — смени пароль.\n",
+    )
+    if not sent:
+        raise ApiError(502, "Не удалось отправить код на почту. Попробуй позже.")
+    return pending, mask_email(email)
+
+
+def verify_tfa_code(conn, user_id: int, code: str) -> bool:
+    row = conn.execute(
+        "SELECT code_hash, code_expires, code_attempts FROM tfa WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    if not row or not row["code_hash"]:
+        return False
+    if int(row["code_expires"]) < int(time.time()):
+        return False
+    if int(row["code_attempts"]) >= TFA_MAX_ATTEMPTS:
+        return False
+    if not verify_password(code.strip(), row["code_hash"]):
+        conn.execute(
+            "UPDATE tfa SET code_attempts = code_attempts + 1 WHERE user_id = ?",
+            (user_id,),
+        )
+        return False
+    # Код использован — гасим его.
+    conn.execute(
+        "UPDATE tfa SET code_hash = '', code_expires = 0, code_attempts = 0, pending_token = '' WHERE user_id = ?",
+        (user_id,),
+    )
+    return True
 
 _db_lock = threading.Lock()
 
@@ -187,7 +283,9 @@ def db_init() -> None:
                 token      TEXT    PRIMARY KEY,
                 user_id    BIGINT  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 created_at BIGINT  NOT NULL,
-                expires_at BIGINT  NOT NULL
+                expires_at BIGINT  NOT NULL,
+                device     TEXT    NOT NULL DEFAULT '',
+                last_seen  BIGINT  NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS banned_ips (
                 ip         TEXT    PRIMARY KEY,
@@ -217,6 +315,27 @@ def db_init() -> None:
                 count      INTEGER NOT NULL DEFAULT 0,
                 created_at BIGINT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS tfa (
+                user_id       BIGINT  NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                enabled       INTEGER NOT NULL DEFAULT 0,
+                code_hash     TEXT    NOT NULL DEFAULT '',
+                code_expires  BIGINT  NOT NULL DEFAULT 0,
+                code_attempts INTEGER NOT NULL DEFAULT 0,
+                pending_token TEXT    NOT NULL DEFAULT ''
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+                id         {id_type},
+                from_id    BIGINT  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                to_id      BIGINT  NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                text       TEXT    NOT NULL,
+                read       INTEGER NOT NULL DEFAULT 0,
+                created_at BIGINT  NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS admin_rights (
+                user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                granted_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                created_at BIGINT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_users_best   ON users(best DESC);
             """
@@ -242,6 +361,19 @@ def db_init() -> None:
         for column in ("last_ip", "avatar", "email"):
             if column not in cols:
                 conn.execute(f"ALTER TABLE users ADD COLUMN {column} TEXT")
+        # Миграция sessions: колонки device/last_seen для списка устройств.
+        if DATABASE_URL:
+            s_cols = {
+                r["column_name"] for r in conn.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'sessions'"
+                )
+            }
+        else:
+            s_cols = {r["name"] for r in conn.execute("PRAGMA table_info(sessions)")}
+        if "device" not in s_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN device TEXT NOT NULL DEFAULT ''")
+        if "last_seen" not in s_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN last_seen BIGINT NOT NULL DEFAULT 0")
 
 
 # ------------------------------------------------------------------- пароли
@@ -265,12 +397,49 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 # ------------------------------------------------------------------- сессии
-def create_session(conn: sqlite3.Connection, user_id: int) -> str:
+def describe_ua(ua: str) -> str:
+    """Человекочитаемое описание устройства по User-Agent браузера."""
+    if not ua:
+        return "Неизвестное устройство"
+    ua_l = ua.lower()
+    if "edg/" in ua_l:
+        browser = "Edge"
+    elif "opr/" in ua_l or "opera" in ua_l:
+        browser = "Opera"
+    elif "firefox/" in ua_l:
+        browser = "Firefox"
+    elif "chrome/" in ua_l or "crios/" in ua_l:
+        browser = "Chrome"
+    elif "safari/" in ua_l:
+        browser = "Safari"
+    else:
+        browser = "Браузер"
+    if "iphone" in ua_l:
+        os_name = "iPhone"
+    elif "ipad" in ua_l:
+        os_name = "iPad"
+    elif "android" in ua_l:
+        os_name = "Android"
+    elif "windows nt 10" in ua_l or "windows nt 11" in ua_l:
+        os_name = "Windows"
+    elif "windows" in ua_l:
+        os_name = "Windows (старая)"
+    elif "mac os x" in ua_l or "macintosh" in ua_l:
+        os_name = "macOS"
+    elif "linux" in ua_l:
+        os_name = "Linux"
+    else:
+        os_name = ""
+    return f"{browser} · {os_name}" if os_name else browser
+
+
+def create_session(conn: sqlite3.Connection, user_id: int, ua: str = "") -> str:
     token = secrets.token_urlsafe(32)
     now = int(time.time())
     conn.execute(
-        "INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-        (token, user_id, now, now + SESSION_TTL),
+        """INSERT INTO sessions (token, user_id, created_at, expires_at, device, last_seen)
+           VALUES (?, ?, ?, ?, ?, ?)""",
+        (token, user_id, now, now + SESSION_TTL, describe_ua(ua)[:120], now),
     )
     conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
     return token
@@ -313,7 +482,7 @@ def user_payload(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "kills": row["kills"],
         "rank": rank["rank"],
         "total": rank["total"],
-        "admin": is_admin(row["name"]),
+        "admin": is_admin_row(conn, row),
         "avatar": row["avatar"],
         "email": row["email"] if "email" in row.keys() else None,
         "friends": friends,
@@ -482,14 +651,21 @@ class Handler(BaseHTTPRequestHandler):
         return "ss_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure"
 
     def require_user(self, conn: sqlite3.Connection) -> sqlite3.Row:
-        row = user_by_token(conn, self.session_token())
+        token = self.session_token()
+        row = user_by_token(conn, token)
         if not row:
             raise ApiError(401, "Требуется вход")
+        # Отмечаем активность сессии (не чаще раза в 10 минут).
+        now = int(time.time())
+        conn.execute(
+            "UPDATE sessions SET last_seen = ? WHERE token = ? AND last_seen < ?",
+            (now, token, now - 600),
+        )
         return row
 
     def require_admin(self, conn: sqlite3.Connection) -> sqlite3.Row:
         row = self.require_user(conn)
-        if not is_admin(row["name"]):
+        if not is_admin_row(conn, row):
             raise ApiError(403, "Недостаточно прав")
         return row
 
@@ -545,6 +721,75 @@ class Handler(BaseHTTPRequestHandler):
                     row = self.require_user(conn)
                     self.send_json(200, {"user": user_payload(conn, row)})
                 return
+            if path == "/api/me/sessions":
+                with db() as conn:
+                    row = self.require_user(conn)
+                    token = self.session_token()
+                    sessions = conn.execute(
+                        """SELECT created_at * 1000 AS created, expires_at * 1000 AS expires,
+                                  device, last_seen * 1000 AS last_seen, token
+                           FROM sessions WHERE user_id = ? ORDER BY last_seen DESC""",
+                        (row["id"],),
+                    ).fetchall()
+                    out = []
+                    for s in sessions:
+                        d = dict(s)
+                        # Токон не отдаём — только признак «это текущее устройство».
+                        d["current"] = (d.pop("token") == token)
+                        out.append(d)
+                    self.send_json(200, {"sessions": out})
+                return
+            if path == "/api/messages":
+                # Переписка с одним другом: ?with=ник. Также отдаём счётчик непрочитанных.
+                with db() as conn:
+                    me = self.require_user(conn)
+                    peer_name = (query.get("with") or [""])[0].strip().lower()
+                    if not peer_name:
+                        unread = conn.execute(
+                            "SELECT COUNT(*) AS c FROM messages WHERE to_id = ? AND read = 0",
+                            (me["id"],),
+                        ).fetchone()["c"]
+                        self.send_json(200, {"unread": unread, "messages": []})
+                        return
+                    peer = conn.execute("SELECT id FROM users WHERE name_key = ?", (peer_name,)).fetchone()
+                    if not peer:
+                        raise ApiError(404, "Игрок не найден")
+                    rows = conn.execute(
+                        """SELECT m.from_id, u.name AS from_name, m.text,
+                                  m.read, m.created_at * 1000 AS created
+                           FROM messages m JOIN users u ON u.id = m.from_id
+                           WHERE (m.from_id = ? AND m.to_id = ?)
+                              OR (m.from_id = ? AND m.to_id = ?)
+                           ORDER BY m.id ASC LIMIT 200""",
+                        (me["id"], peer["id"], peer["id"], me["id"]),
+                    ).fetchall()
+                    # Отмечаем входящие как прочитанные.
+                    conn.execute(
+                        "UPDATE messages SET read = 1 WHERE to_id = ? AND from_id = ? AND read = 0",
+                        (me["id"], peer["id"]),
+                    )
+                    unread = conn.execute(
+                        "SELECT COUNT(*) AS c FROM messages WHERE to_id = ? AND read = 0",
+                        (me["id"],),
+                    ).fetchone()["c"]
+                    self.send_json(200, {
+                        "unread": unread,
+                        "messages": [
+                            {
+                                "from": r["from_name"],
+                                "mine": r["from_id"] == me["id"],
+                                "text": r["text"],
+                                "created": r["created"],
+                            }
+                            for r in rows
+                        ],
+                    })
+                return
+            if path == "/api/tfa/status":
+                with db() as conn:
+                    row = self.require_user(conn)
+                    self.send_json(200, {"enabled": tfa_enabled(conn, row["id"])})
+                return
             if path == "/api/admin/users":
                 with db() as conn:
                     self.require_admin(conn)
@@ -567,7 +812,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "best": r["best"],
                                 "games": r["games"],
                                 "kills": r["kills"],
-                                "admin": is_admin(r["name"]),
+                                "admin": is_admin_row(conn, r),
                                 "ip": r["last_ip"] or "",
                                 "banned": bool(r["last_ip"]) and r["last_ip"] in banned,
                             }
@@ -699,7 +944,7 @@ class Handler(BaseHTTPRequestHandler):
                      email if email else None),
                 )
                 row = conn.execute("SELECT * FROM users WHERE name_key = ?", (name.lower(),)).fetchone()
-                token = create_session(conn, row["id"])
+                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "")
                 reset_attempts(ip)
                 if email:
                     send_email(
@@ -731,7 +976,16 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(401, "Неверный ник или пароль")
                 reset_attempts(ip)
                 conn.execute("UPDATE users SET last_ip = ? WHERE id = ?", (ip, row["id"]))
-                token = create_session(conn, row["id"])
+
+                # --- 2FA ---
+                if tfa_enabled(conn, row["id"]):
+                    # Пароль верный — шлём код на email.
+                    pending, masked = issue_tfa_code(conn, row)
+                    self.send_json(200, {"tfa_required": True, "pending_token": pending, "email": masked})
+                    return
+
+                # 2FA не включён — сразу даём сессию.
+                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "")
                 self.send_json(200, {"token": token, "user": user_payload(conn, row)},
                                cookies=[self.session_cookie(token)])
             return
@@ -889,6 +1143,144 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {"ok": True})
             return
 
+        if path == "/api/messages/send":
+            # Сообщение другу (взаимная дружба обязательна).
+            data = self.read_json()
+            target = str(data.get("target") or "").strip().lower()
+            text = str(data.get("text") or "").strip()
+            if not target:
+                raise ApiError(400, "Укажите получателя")
+            if not text or len(text) > 1000:
+                raise ApiError(400, "Сообщение: 1–1000 символов")
+            with db() as conn:
+                me = self.require_user(conn)
+                friend = conn.execute(
+                    """SELECT u.id FROM friends f JOIN users u ON u.id = f.friend_id
+                       WHERE f.user_id = ? AND u.name_key = ?""",
+                    (me["id"], target),
+                ).fetchone()
+                if not friend:
+                    raise ApiError(404, "Игрок не найден в друзьях")
+                conn.execute(
+                    "INSERT INTO messages (from_id, to_id, text, read, created_at) VALUES (?, ?, ?, 0, ?)",
+                    (me["id"], friend["id"], text, int(time.time())),
+                )
+            self.send_json(200, {"ok": True})
+            return
+
+        if path == "/api/tfa/verify":
+            # Второй шаг входа: pending_token + 6-значный код из письма.
+            data = self.read_json()
+            pending = str(data.get("pending_token") or "")
+            code = str(data.get("code") or "").strip()
+            if not pending or not re.fullmatch(r"\d{6}", code):
+                raise ApiError(400, "Введите 6-значный код из письма")
+            if too_many_attempts(ip):
+                raise ApiError(429, "Слишком много попыток. Попробуйте позже.")
+            note_attempt(ip)
+            with db() as conn:
+                row = conn.execute(
+                    """SELECT u.* FROM tfa t JOIN users u ON u.id = t.user_id
+                       WHERE t.pending_token = ?""",
+                    (pending,),
+                ).fetchone()
+                if not row:
+                    raise ApiError(400, "Сессия подтверждения не найдена. Войдите заново.")
+                if not verify_tfa_code(conn, row["id"], code):
+                    raise ApiError(401, "Неверный или просроченный код")
+                reset_attempts(ip)
+                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "")
+                self.send_json(200, {"token": token, "user": user_payload(conn, row)},
+                               cookies=[self.session_cookie(token)])
+            return
+
+        if path == "/api/tfa/enable":
+            # Включить 2FA: нужен пароль; код приходит на email, подтверждение — /api/tfa/confirm.
+            data = self.read_json()
+            password = str(data.get("password") or "")
+            with db() as conn:
+                row = self.require_user(conn)
+                if not verify_password(password, row["pass_hash"]):
+                    raise ApiError(401, "Неверный пароль")
+                email = row["email"] if "email" in row.keys() else None
+                if not email:
+                    raise ApiError(400, "Сначала добавьте email в профиле")
+                pending, masked = issue_tfa_code(conn, row)
+            self.send_json(200, {"pending_token": pending, "email": masked})
+            return
+
+        if path == "/api/tfa/confirm":
+            # Подтверждение включения 2FA кодом из письма.
+            data = self.read_json()
+            pending = str(data.get("pending_token") or "")
+            code = str(data.get("code") or "").strip()
+            if not pending or not re.fullmatch(r"\d{6}", code):
+                raise ApiError(400, "Введите 6-значный код из письма")
+            with db() as conn:
+                row = self.require_user(conn)
+                tfa_row = conn.execute(
+                    "SELECT user_id FROM tfa WHERE user_id = ? AND pending_token = ?",
+                    (row["id"], pending),
+                ).fetchone()
+                if not tfa_row:
+                    raise ApiError(400, "Сессия подтверждения не найдена. Начните заново.")
+                if not verify_tfa_code(conn, row["id"], code):
+                    raise ApiError(401, "Неверный или просроченный код")
+                conn.execute("UPDATE tfa SET enabled = 1 WHERE user_id = ?", (row["id"],))
+            self.send_json(200, {"ok": True, "enabled": True})
+            return
+
+        if path == "/api/tfa/disable":
+            data = self.read_json()
+            password = str(data.get("password") or "")
+            with db() as conn:
+                row = self.require_user(conn)
+                if not verify_password(password, row["pass_hash"]):
+                    raise ApiError(401, "Неверный пароль")
+                conn.execute(
+                    """UPDATE tfa SET enabled = 0, code_hash = '', code_expires = 0,
+                              code_attempts = 0, pending_token = ''
+                       WHERE user_id = ?""",
+                    (row["id"],),
+                )
+            self.send_json(200, {"ok": True, "enabled": False})
+            return
+
+        if path.startswith("/api/admin/rights"):
+            # Назначение/снятие админ-прав (только для разработчиков).
+            data = self.read_json()
+            target = str(data.get("name") or "").strip().lower()
+            if not target:
+                raise ApiError(400, "Укажите ник игрока")
+            with db() as conn:
+                admin = self.require_admin(conn)
+                row = conn.execute(
+                    "SELECT id, name FROM users WHERE name_key = ?", (target,)
+                ).fetchone()
+                if not row:
+                    raise ApiError(404, "Игрок не найден")
+                if row["id"] == admin["id"]:
+                    raise ApiError(400, "Нельзя изменить собственные права")
+                if path == "/api/admin/rights/grant":
+                    if is_admin_row(conn, row):
+                        raise ApiError(409, "Игрок уже разработчик")
+                    conn.execute(
+                        """INSERT INTO admin_rights (user_id, granted_by, created_at)
+                           VALUES (?, ?, ?)
+                           ON CONFLICT(user_id) DO NOTHING""",
+                        (row["id"], admin["id"], int(time.time())),
+                    )
+                    log_admin_action(conn, admin["name"], "grant-admin", row["name"],
+                                     "выданы права разработчика")
+                else:  # revoke
+                    cur = conn.execute("DELETE FROM admin_rights WHERE user_id = ?", (row["id"],))
+                    if cur.rowcount == 0:
+                        raise ApiError(404, "У игрока нет назначенных прав")
+                    log_admin_action(conn, admin["name"], "revoke-admin", row["name"],
+                                     "права разработчика сняты")
+            self.send_json(200, {"ok": True})
+            return
+
         if path == "/api/me/export":
             # GDPR: выгрузка всех данных игрока в JSON.
             with db() as conn:
@@ -1022,8 +1414,8 @@ class Handler(BaseHTTPRequestHandler):
                     if not row:
                         raise ApiError(404, "Игрок не найден")
                     if row["id"] == admin["id"]:
-                        raise ApiError(400, "Нельзя удалить собственный аккаунт")
-                    if is_admin(row["name"]):
+                        raise ApiError(400, "Нельзя удалить самого себя")
+                    if is_admin_row(conn, row):
                         raise ApiError(403, "Нельзя удалить аккаунт разработчика")
                     conn.execute("DELETE FROM users WHERE id = ?", (row["id"],))
                     log_admin_action(conn, admin["name"], "delete-user", row["name"],
@@ -1037,12 +1429,12 @@ class Handler(BaseHTTPRequestHandler):
                     # Бан по нику: берём IP, с которого игрок заходил последним.
                     with db() as peek:
                         row = peek.execute(
-                            "SELECT last_ip, name FROM users WHERE name_key = ?", (target,)
+                            "SELECT id, last_ip, name FROM users WHERE name_key = ?", (target,)
                         ).fetchone()
+                        if row is not None and is_admin_row(peek, row):
+                            raise ApiError(403, "Нельзя заблокировать аккаунт разработчика")
                     if not row:
                         raise ApiError(404, "Игрок не найден")
-                    if is_admin(row["name"]):
-                        raise ApiError(403, "Нельзя заблокировать аккаунт разработчика")
                     if not row["last_ip"]:
                         raise ApiError(400, "У игрока нет сохранённого IP — он ещё не входил")
                     ip = row["last_ip"]
@@ -1058,10 +1450,13 @@ class Handler(BaseHTTPRequestHandler):
                 expires = int(time.time()) + days * 86400 if days else None
                 with db() as conn:
                     admin = self.require_admin(conn)
-                    # Защита: нельзя забанить IP, под которым работает любой админ.
+                    # Защита: нельзя забанить IP, под которым работает любой админ
+                    # (из ADMIN_NAMES или с назначенными правами).
                     admin_ips = {
                         r["last_ip"] for r in conn.execute(
-                            "SELECT last_ip FROM users WHERE name_key IN ({})".format(
+                            """SELECT last_ip FROM users
+                               WHERE name_key IN ({})
+                                  OR id IN (SELECT user_id FROM admin_rights)""".format(
                                 ", ".join("?" * len(ADMIN_NAMES))
                             ),
                             tuple(ADMIN_NAMES),

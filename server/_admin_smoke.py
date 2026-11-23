@@ -30,9 +30,12 @@ def call(method, path, body=None, token=None):
 def main():
     tmp = tempfile.mkdtemp(prefix="ss-admin-")
     env = dict(os.environ, PORT=PORT, HOST="127.0.0.1",
-               DB_PATH=str(Path(tmp) / "test.db"), ADMIN_NAMES="DevQA")
+               DB_PATH=str(Path(tmp) / "test.db"), ADMIN_NAMES="DevQA",
+               SMTP_DRY_RUN="1", PYTHONIOENCODING="utf-8")
+    log_path = str(Path(tmp) / "server.log")
+    log_file = open(log_path, "w", encoding="utf-8")
     srv = subprocess.Popen([sys.executable, str(Path(__file__).parent / "app.py")], env=env,
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                           stdout=log_file, stderr=subprocess.STDOUT)
     try:
         for _ in range(40):
             try:
@@ -130,15 +133,87 @@ def main():
         print("hit v1.1 portable:", st, p.get("count"))
         st, p = call("GET", "/api/downloads")
         for d in p.get("downloads", []):
-            print("  dl:", d["version"], d["format"], "→", d["count"])
+            print("  dl:", d["version"], d["format"], "=", d["count"])
         st, p = call("POST", "/api/download/hit", {"version": "v99", "format": "installer"}, token=None)
         print("bad version:", st, p.get("error"))
+
+        # --- 2FA через email ---
+        st, p = call_ip("POST", "/api/register",
+                        {"name": "Alice", "password": "alicepw1", "email": "a@ex.com"}, ip="7.7.7.7")
+        print("register alice:", st)
+        st, p = call_ip("POST", "/api/login", {"name": "Alice", "password": "alicepw1"}, ip="7.7.7.7")
+        alicet = p.get("token")
+        print("alice login (no 2FA yet):", st, bool(alicet))
+        print("enable 2FA:", call("POST", "/api/tfa/enable", {"password": "alicepw1"}, token=alicet))
+        st, p = call_ip("POST", "/api/login", {"name": "Alice", "password": "alicepw1"}, ip="7.7.7.7")
+        pending = p.get("pending_token", "")
+        print("login 2FA step1:", st, p.get("tfa_required"), "email:", p.get("email"))
+        print("verify wrong code:", call_ip("POST", "/api/tfa/verify",
+                                            {"pending_token": pending, "code": "000000"}, ip="7.7.7.7"))
+        # Достаём реальный код из лога сервера (SMTP_DRY_RUN).
+        log_file.flush()
+        code = ""
+        with open(log_path, encoding="utf-8") as lf:
+            import re as _re
+            for line in lf:
+                m = _re.search(r"код подтверждения входа: (\d{6})", line)
+                if m:
+                    code = m.group(1)
+        print("code from server log:", bool(code))
+        st, p = call_ip("POST", "/api/tfa/verify",
+                        {"pending_token": pending, "code": code}, ip="7.7.7.7")
+        print("verify right code:", st, bool(p.get("token")))
+        print("tfa status:", call("GET", "/api/tfa/status", token=p.get("token")))
+        print("reuse pending:", call_ip("POST", "/api/tfa/verify",
+                                         {"pending_token": pending, "code": code}, ip="7.7.7.7")[0])
+        print("disable 2FA:", call("POST", "/api/tfa/disable",
+                                   {"password": "alicepw1"}, token=p.get("token")))
+        st, presp = call_ip("POST", "/api/login", {"name": "Alice", "password": "alicepw1"}, ip="7.7.7.7")
+        print("login after disable:", st)
+        alice_token = presp.get("token")
+
+        # --- Сообщения друзьям ---
+        st, presp = call_ip("POST", "/api/login", {"name": "Victim", "password": "pass123"}, ip="8.8.8.8")
+        vict = presp.get("token")
+        print("alice->victim not friend:", call("POST", "/api/messages/send",
+              {"target": "victim", "text": "privet"}, token=alice_token))
+        print("victim add alice:", call("POST", "/api/friends/add",
+                                        {"target": "alice"}, token=vict))
+        print("alice send:", call("POST", "/api/messages/send",
+                                  {"target": "victim", "text": "privet!"}, token=alice_token))
+        print("victim read:", call("GET", "/api/messages?with=Alice", token=vict))
+        print("victim reply:", call("POST", "/api/messages/send",
+                                    {"target": "alice", "text": "hy"}, token=vict))
+        st, p = call("GET", "/api/messages?with=Victim", token=alice_token)
+        print("alice chat:", st, [(m["from"], m["text"]) for m in p.get("messages", [])])
+        print("unread after read:", p.get("unread"))
+        print("send too long:", call("POST", "/api/messages/send",
+                                     {"target": "victim", "text": "x" * 1001}, token=alice_token)[0])
+
+        # --- Назначение админ-прав ---
+        st, p = call("GET", "/api/admin/users", token=at)
+        print("alice admin before grant:", [u["admin"] for u in p.get("users", []) if u["name"] == "Alice"])
+        print("alice grant (no rights -> 403):", call("POST", "/api/admin/rights/grant",
+                                        {"name": "Victim"}, token=alice_token)[0])
+        print("dev grant alice:", call("POST", "/api/admin/rights/grant",
+                                       {"name": "Alice"}, token=at))
+        st, p = call("GET", "/api/admin/users", token=at)
+        print("alice admin after grant:", [u["admin"] for u in p.get("users", []) if u["name"] == "Alice"])
+        print("alice stats with rights:", call("GET", "/api/admin/stats", token=alice_token)[0])
+        print("ban victim by alice:", call("POST", "/api/admin/ban",
+                                            {"name": "Victim", "reason": "test", "days": 1}, token=alice_token))
+        print("dev revoke alice:", call("POST", "/api/admin/rights/revoke",
+                                        {"name": "Alice"}, token=at))
+        print("alice stats after revoke:", call("GET", "/api/admin/stats", token=alice_token)[0])
+        print("revoke not granted:", call("POST", "/api/admin/rights/revoke",
+                                          {"name": "Victim"}, token=at))
     finally:
         srv.terminate()
         try:
             srv.wait(timeout=5)
         except subprocess.TimeoutExpired:
             srv.kill()
+        log_file.close()
 
 
 if __name__ == "__main__":

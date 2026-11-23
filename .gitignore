@@ -12,3 +12,6 @@ __pycache__/
 # Сборка игры
 space_shuter v1.0/build/
 space_shuter v1.0/dist/
+
+# Артефакты сборки установщика (готовые exe лежат в site/download/)
+installer_output/

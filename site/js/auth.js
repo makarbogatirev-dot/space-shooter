@@ -46,7 +46,8 @@
     /* --- Цвета аватарок --- */
     const AVATAR_COLORS = [
         '#00d4ff','#ff4466','#00cc88','#ffaa00','#aa44ff',
-        '#ff66aa','#00aaff','#ff8844','#44dd44','#ffdd44'
+        '#ff66aa','#00aaff','#ff8844','#44dd44','#ffdd44',
+	'#ffffff'
     ];
     const DEFAULT_AVATAR_HUE = 220;
 
@@ -235,6 +236,12 @@
             const data = await api('/api/login', {
                 method: 'POST', body: { name, password: pass }, auth: false
             });
+            if (data.tfa_required) {
+                // Второй шаг: код из письма.
+                openTfaModal(data.pending_token, data.email);
+                loginForm.reset();
+                return;
+            }
             setToken(data.token);
             user = data.user;
             loginForm.reset();
@@ -255,18 +262,20 @@
         const name = document.getElementById('reg-name').value.trim();
         const pass = document.getElementById('reg-pass').value;
         const pass2 = document.getElementById('reg-pass2').value;
+        const email = document.getElementById('reg-email').value.trim();
         regError.textContent = '';
 
         if (name.length < 3 || name.length > 20) { regError.textContent = 'Ник: 3–20 символов'; return; }
         if (!/^[a-zA-Zа-яА-ЯёЁ0-9_]+$/.test(name)) { regError.textContent = 'Только буквы, цифры и _'; return; }
         if (pass.length < 6) { regError.textContent = 'Пароль: минимум 6 символов'; return; }
         if (pass !== pass2) { regError.textContent = 'Пароли не совпадают'; return; }
+        if (email && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(email)) { regError.textContent = 'Некорректный email'; return; }
 
         const btn = regForm.querySelector('button[type=submit]');
         busy = true; btn.disabled = true; btn.textContent = 'Создаём…';
         try {
             const data = await api('/api/register', {
-                method: 'POST', body: { name, password: pass }, auth: false
+                method: 'POST', body: { name, password: pass, email }, auth: false
             });
             setToken(data.token);
             user = data.user;
@@ -426,6 +435,30 @@
             since.textContent = new Date(u.created).toLocaleDateString('ru-RU');
             const ip = document.createElement('td');
             ip.textContent = u.banned ? '🚫 ' + (u.ip || '') : (u.ip || '—');
+            // Колонка прав разработчика: выдать / снять (нельзя — себе).
+            const rights = document.createElement('td');
+            const isSelf = user && u.name.toLowerCase() === String(user.name).toLowerCase();
+            if (isSelf) {
+                rights.textContent = '—';
+            } else {
+                const rbtn = document.createElement('button');
+                rbtn.type = 'button';
+                rbtn.className = 'admin-row-edit ' + (u.admin ? 'revoke' : 'grant');
+                rbtn.textContent = u.admin ? 'Снять' : 'Выдать';
+                rbtn.title = u.admin
+                    ? 'Снять права разработчика'
+                    : 'Дать доступ к панели разработчика';
+                rbtn.addEventListener('click', async () => {
+                    const endpoint = u.admin ? '/api/admin/rights/revoke' : '/api/admin/rights/grant';
+                    try {
+                        await api(endpoint, { method: 'POST', body: { name: u.name } });
+                        loadAdminUsers();
+                    } catch (err) {
+                        adminError.textContent = err.message;
+                    }
+                });
+                rights.appendChild(rbtn);
+            }
             const act = document.createElement('td');
             const edit = document.createElement('button');
             edit.type = 'button';
@@ -433,7 +466,7 @@
             edit.textContent = 'Изменить';
             edit.addEventListener('click', () => openAdminEdit(u));
             act.appendChild(edit);
-            tr.append(name, best, games, kills, since, ip, act);
+            tr.append(name, best, games, kills, since, ip, rights, act);
             adminUsersEl.appendChild(tr);
         }
     }
@@ -899,4 +932,352 @@
     });
 
     loadDownloadCounts();
+
+    /* ============================================
+       2FA: модалка ввода кода
+       ============================================ */
+    const tfaModal = document.getElementById('tfa-modal');
+    let tfaPending = '';
+
+    function openTfaModal(pending, emailMasked) {
+        if (!tfaModal) return;
+        tfaPending = pending;
+        document.getElementById('tfa-email').textContent =
+            'Мы отправили 6-значный код на ' + emailMasked + '. Проверь входящие и спам.';
+        document.getElementById('tfa-code').value = '';
+        document.getElementById('tfa-msg').textContent = '';
+        modal.classList.add('hidden');               // прячем модалку входа
+        tfaModal.classList.remove('hidden');
+        document.body.style.overflow = 'hidden';
+        document.getElementById('tfa-code').focus();
+    }
+
+    function closeTfaModal() {
+        if (!tfaModal) return;
+        tfaModal.classList.add('hidden');
+        document.body.style.overflow = '';
+        modal.classList.remove('hidden');            // возвращаемся к форме входа
+    }
+
+    if (tfaModal) {
+        tfaModal.querySelectorAll('[data-close]').forEach(el =>
+            el.addEventListener('click', closeTfaModal));
+
+        document.getElementById('tfa-submit').addEventListener('click', async () => {
+            const msg = document.getElementById('tfa-msg');
+            const code = document.getElementById('tfa-code').value.trim();
+            msg.textContent = '';
+            if (!/^\d{6}$/.test(code)) { msg.textContent = 'Введите 6-значный код из письма'; return; }
+            const btn = document.getElementById('tfa-submit');
+            btn.disabled = true; btn.textContent = 'Проверяем…';
+            try {
+                const data = await api('/api/tfa/verify', {
+                    method: 'POST', body: { pending_token: tfaPending, code }, auth: false
+                });
+                setToken(data.token);
+                user = data.user;
+                closeTfaModal();
+                closeModal();
+                refreshUI();
+                updateLeaderboard();
+            } catch (err) {
+                msg.textContent = err.message;
+            } finally {
+                btn.disabled = false; btn.textContent = 'Подтвердить';
+            }
+        });
+
+        document.getElementById('tfa-code').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') document.getElementById('tfa-submit').click();
+        });
+    }
+
+    /* ============================================
+       Email в профиле
+       ============================================ */
+    (function emailSection() {
+        const emailInput = document.getElementById('profile-email');
+        const emailSaveBtn = document.getElementById('email-save-btn');
+        const emailMsg = document.getElementById('email-msg');
+        if (!emailInput || !emailSaveBtn) return;
+
+        emailSaveBtn.addEventListener('click', async () => {
+            emailMsg.textContent = '';
+            emailMsg.style.color = '';
+            const email = emailInput.value.trim();
+            if (email && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(email)) {
+                emailMsg.textContent = 'Некорректный email';
+                return;
+            }
+            emailSaveBtn.disabled = true;
+            try {
+                const data = await api('/api/me/email', {
+                    method: 'POST', body: { email: email || '' }, auth: true
+                });
+                user = data.user;
+                refreshUI();
+                emailMsg.textContent = 'Сохранено ✓';
+                emailMsg.style.color = '#00cc88';
+                setTimeout(() => { emailMsg.textContent = ''; emailMsg.style.color = ''; }, 3000);
+            } catch (err) {
+                emailMsg.textContent = err.message;
+            } finally {
+                emailSaveBtn.disabled = false;
+            }
+        });
+    })();
+
+    /* ============================================
+       2FA: включение/выключение в профиле
+       ============================================ */
+    (function tfaSettings() {
+        const stateEl = document.getElementById('tfa-state');
+        const toggleBtn = document.getElementById('tfa-toggle-btn');
+        const passInput = document.getElementById('tfa-pass');
+        const msgEl = document.getElementById('tfa-settings-msg');
+        if (!stateEl || !toggleBtn) return;
+        let enabled = false;
+
+        async function loadStatus() {
+            if (!user) { stateEl.textContent = 'Включается в профиле после входа'; return; }
+            try {
+                const data = await api('/api/tfa/status', { auth: true });
+                enabled = data.enabled;
+                stateEl.textContent = enabled
+                    ? '✅ Включена — при входе код приходит на email'
+                    : '⬜ Выключена — вход только по паролю';
+                toggleBtn.textContent = enabled ? 'Выключить' : 'Включить';
+            } catch {
+                stateEl.textContent = '—';
+            }
+        }
+
+        toggleBtn.addEventListener('click', async () => {
+            msgEl.textContent = '';
+            const password = passInput.value;
+            if (!password) { msgEl.textContent = 'Введи пароль для подтверждения'; return; }
+            toggleBtn.disabled = true;
+            try {
+                if (enabled) {
+                    await api('/api/tfa/disable', { method: 'POST', body: { password }, auth: true });
+                    passInput.value = '';
+                    await loadStatus();
+                } else {
+                    const data = await api('/api/tfa/enable', { method: 'POST', body: { password }, auth: true });
+                    const code = prompt('Введи 6-значный код из письма на ' + data.email + ':');
+                    if (code && /^\d{6}$/.test(code.trim())) {
+                        await api('/api/tfa/confirm', {
+                            method: 'POST',
+                            body: { pending_token: data.pending_token, code: code.trim() },
+                            auth: true
+                        });
+                        passInput.value = '';
+                        await loadStatus();
+                    } else {
+                        msgEl.textContent = 'Включение отменено — код не введён';
+                    }
+                }
+            } catch (err) {
+                msgEl.textContent = err.message;
+            } finally {
+                toggleBtn.disabled = false;
+            }
+        });
+
+        document.addEventListener('ss:auth', () => { loadStatus(); });
+        loadStatus();
+    })();
+
+    /* ============================================
+       Друзья + сообщения
+       ============================================ */
+    function escHtml(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    (function friendsSection() {
+        const addInput = document.getElementById('friend-add');
+        const addBtn = document.getElementById('friend-add-btn');
+        const listEl = document.getElementById('friends-list');
+        const emptyEl = document.getElementById('friends-empty');
+        const msgEl = document.getElementById('friend-msg');
+        if (!addInput || !addBtn || !listEl) return;
+
+        function renderFriends() {
+            const friends = (user && user.friends) || [];
+            listEl.innerHTML = '';
+            emptyEl.classList.toggle('hidden', friends.length > 0);
+            for (const f of friends) {
+                const li = document.createElement('li');
+                const clr = avatarColor(f.name, f.avatar);
+                li.innerHTML =
+                    '<span class="friend-avatar" style="background:' + clr + '">' +
+                    escHtml(f.name[0].toUpperCase()) + '</span>' +
+                    '<span class="friend-name">' + escHtml(f.name) + '</span>' +
+                    '<span class="friend-best">🏆 ' + f.best + '</span>' +
+                    '<button class="friend-chat" data-friend="' + escHtml(f.name) +
+                    '" type="button" title="Написать">✉</button>' +
+                    '<button class="friend-remove" data-friend="' + escHtml(f.name) +
+                    '" type="button" title="Удалить из друзей">✕</button>';
+                listEl.appendChild(li);
+            }
+        }
+
+        async function reloadMe() {
+            const data = await api('/api/me', { auth: true });
+            user = data.user;
+            refreshUI();
+        }
+
+        addBtn.addEventListener('click', async () => {
+            msgEl.textContent = '';
+            if (!user) { msgEl.textContent = 'Сначала войди в аккаунт'; return; }
+            const target = addInput.value.trim().toLowerCase();
+            if (!target) { msgEl.textContent = 'Укажите ник друга'; return; }
+            addBtn.disabled = true;
+            try {
+                await api('/api/friends/add', { method: 'POST', body: { target }, auth: true });
+                addInput.value = '';
+                await reloadMe();
+            } catch (err) {
+                msgEl.textContent = err.message;
+            } finally {
+                addBtn.disabled = false;
+            }
+        });
+
+        listEl.addEventListener('click', async (e) => {
+            const removeBtn = e.target.closest('.friend-remove');
+            if (removeBtn) {
+                const target = removeBtn.getAttribute('data-friend').toLowerCase();
+                try {
+                    await api('/api/friends/remove', { method: 'POST', body: { target }, auth: true });
+                    await reloadMe();
+                } catch (err) {
+                    msgEl.textContent = err.message;
+                }
+                return;
+            }
+            const chatBtn = e.target.closest('.friend-chat');
+            if (chatBtn) openChat(chatBtn.getAttribute('data-friend'));
+        });
+
+        document.addEventListener('ss:auth', renderFriends);
+        renderFriends();
+    })();
+
+    /* ============================================
+       Чат с другом
+       ============================================ */
+    const chatModal = document.getElementById('chat-modal');
+    let chatTarget = '';
+
+    async function openChat(name) {
+        if (!chatModal) return;
+        chatTarget = name;
+        document.getElementById('chat-peer').textContent = '✉ ' + name;
+        document.getElementById('chat-list').innerHTML = '';
+        document.getElementById('chat-input').value = '';
+        modal.classList.add('hidden');
+        chatModal.classList.remove('hidden');
+        document.body.style.overflow = 'hidden';
+        await loadChat();
+    }
+
+    async function loadChat() {
+        const listEl = document.getElementById('chat-list');
+        try {
+            const data = await api('/api/messages?with=' + encodeURIComponent(chatTarget), { auth: true });
+            listEl.innerHTML = '';
+            const emptyEl = document.getElementById('chat-empty');
+            emptyEl.classList.toggle('hidden', data.messages.length > 0);
+            for (const m of data.messages) {
+                const li = document.createElement('li');
+                li.className = 'chat-msg' + (m.mine ? ' chat-mine' : '');
+                li.innerHTML = '<span class="chat-author">' + (m.mine ? 'Ты' : escHtml(m.from)) +
+                    '</span><span>' + escHtml(m.text) + '</span>';
+                listEl.appendChild(li);
+            }
+            listEl.scrollTop = listEl.scrollHeight;
+        } catch (err) {
+            listEl.innerHTML = '<li class="chat-msg">' + escHtml(err.message) + '</li>';
+        }
+    }
+
+    if (chatModal) {
+        chatModal.querySelectorAll('[data-close]').forEach(el =>
+            el.addEventListener('click', () => {
+                chatModal.classList.add('hidden');
+                document.body.style.overflow = '';
+                modal.classList.remove('hidden');
+            }));
+
+        const sendBtn = document.getElementById('chat-send');
+        const sendMsg = async () => {
+            const input = document.getElementById('chat-input');
+            const text = input.value.trim();
+            if (!text) return;
+            sendBtn.disabled = true;
+            try {
+                await api('/api/messages/send', {
+                    method: 'POST', body: { target: chatTarget, text }, auth: true
+                });
+                input.value = '';
+                await loadChat();
+            } catch (err) {
+                const listEl = document.getElementById('chat-list');
+                const li = document.createElement('li');
+                li.className = 'chat-msg';
+                li.textContent = '⚠ ' + err.message;
+                listEl.appendChild(li);
+            } finally {
+                sendBtn.disabled = false;
+            }
+        };
+        sendBtn.addEventListener('click', sendMsg);
+        document.getElementById('chat-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); sendMsg(); }
+        });
+    }
+
+    /* ============================================
+       Устройства (список активных сессий)
+       ============================================ */
+    (function devicesSection() {
+        const toggleBtn = document.getElementById('devices-toggle');
+        const listEl = document.getElementById('devices-list');
+        if (!toggleBtn || !listEl) return;
+
+        toggleBtn.addEventListener('click', async () => {
+            const showing = !listEl.classList.contains('hidden');
+            listEl.classList.toggle('hidden');
+            toggleBtn.textContent = showing ? 'Показать устройства ▾' : 'Скрыть устройства ▴';
+            if (showing) return;
+            listEl.innerHTML = '<li>Загрузка…</li>';
+            try {
+                const data = await api('/api/me/sessions', { auth: true });
+                listEl.innerHTML = '';
+                const now = Date.now();
+                for (const s of data.sessions) {
+                    const ago = s.last_seen ? Math.round((now - s.last_seen) / 1000) : 0;
+                    let agoStr = 'только что';
+                    if (ago >= 60) agoStr = Math.floor(ago / 60) + ' мин назад';
+                    if (ago >= 3600) agoStr = Math.floor(ago / 3600) + ' ч назад';
+                    if (ago >= 86400) agoStr = Math.floor(ago / 86400) + ' дн назад';
+                    const li = document.createElement('li');
+                    li.innerHTML =
+                        '<span class="' + (s.current ? 'device-current' : '') + '">' +
+                        escHtml(s.device || 'Неизвестное устройство') +
+                        (s.current ? ' ← ты здесь' : '') + '</span>' +
+                        '<span class="device-meta">активен: ' + agoStr + '</span>';
+                    listEl.appendChild(li);
+                }
+                if (data.sessions.length === 0) listEl.innerHTML = '<li>Нет активных сессий</li>';
+            } catch (err) {
+                listEl.innerHTML = '<li>' + escHtml(err.message) + '</li>';
+            }
+        });
+    })();
 })();

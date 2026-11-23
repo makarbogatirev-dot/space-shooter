@@ -370,11 +370,15 @@
                         <span>Повтор пароля</span>
                         <input type="password" id="reg-pass2" placeholder="Ещё раз" required>
                     </label>
+                    <label class="field">
+                        <span>Email (необязательно)</span>
+                        <input type="email" id="reg-email" placeholder="you@example.com" maxlength="200" autocomplete="email">
+                    </label>
                     <p id="reg-error" class="form-error"></p>
                     <button type="submit" class="btn btn-primary btn-block">Создать аккаунт</button>
                 </form>
 
-                <p class="auth-note">🔒 Пароль хэшируется на сервере (PBKDF2-SHA256) и не хранится в открытом виде. Аккаунт работает на любом устройстве.</p>
+                <p class="auth-note">🔒 Пароль хэшируется на сервере (PBKDF2-SHA256) и не хранится в открытом виде. Аккаунт работает на любом устройстве.<br>📧 Email нужен только для уведомлений (приветствие, смена пароля админом).</p>
             </div>
 
             <!-- Экран: профиль -->
@@ -397,6 +401,38 @@
                     <div class="stat"><span class="stat-value" id="stat-kills">0</span><span class="stat-label">Метеоритов</span></div>
                 </div>
                 <p id="profile-rank" class="profile-rank"></p>
+                <div class="profile-section">
+                    <h4 class="profile-section-title">📧 Email для уведомлений</h4>
+                    <div class="email-row">
+                        <input type="email" id="profile-email" class="admin-search" placeholder="you@example.com" maxlength="200" autocomplete="email">
+                        <button id="email-save-btn" class="btn btn-secondary btn-small" type="button">Сохранить</button>
+                    </div>
+                    <p id="email-msg" class="form-error"></p>
+                </div>
+                <div class="profile-section">
+                    <h4 class="profile-section-title">👥 Друзья</h4>
+                    <div class="email-row">
+                        <input type="text" id="friend-add" class="admin-search" placeholder="Ник друга" maxlength="20" autocomplete="off">
+                        <button id="friend-add-btn" class="btn btn-secondary btn-small" type="button">Добавить</button>
+                    </div>
+                    <p id="friend-msg" class="form-error"></p>
+                    <ul id="friends-list" class="friends-list"></ul>
+                    <p id="friends-empty" class="friends-empty">Пока никого — добавь друга по нику и соревнуйся за рекорды</p>
+                </div>
+                <div class="profile-section">
+                    <h4 class="profile-section-title">🔐 Двухфакторная защита (2FA)</h4>
+                    <p class="profile-hint" id="tfa-state">Загрузка…</p>
+                    <div class="email-row">
+                        <input type="password" id="tfa-pass" placeholder="Пароль для подтверждения" autocomplete="current-password">
+                        <button id="tfa-toggle-btn" class="btn btn-secondary btn-small" type="button">Включить</button>
+                    </div>
+                    <p id="tfa-settings-msg" class="form-error"></p>
+                </div>
+                <div class="profile-section">
+                    <h4 class="profile-section-title">💻 Устройства, где ты входе</h4>
+                    <button id="devices-toggle" class="devices-toggle" type="button">Показать устройства ▾</button>
+                    <ul id="devices-list" class="devices-list hidden"></ul>
+                </div>
                 <div class="profile-actions">
                     <button id="admin-btn" class="btn btn-primary btn-block hidden" type="button">🛠 Панель разработчика</button>
                     <div class="profile-data-actions">
@@ -427,7 +463,7 @@
             <div class="admin-table-wrap">
                 <table class="admin-table">
                     <thead>
-                        <tr><th>Ник</th><th>Рекорд</th><th>Игры</th><th>Убито</th><th>С</th><th>IP</th><th></th></tr>
+                        <tr><th>Ник</th><th>Рекорд</th><th>Игры</th><th>Убито</th><th>С</th><th>IP</th><th>Права</th><th></th></tr>
                     </thead>
                     <tbody id="admin-users"></tbody>
                 </table>
@@ -526,6 +562,38 @@
             </label>
             <p id="delacc-error" class="form-error"></p>
             <button id="delacc-confirm" class="btn btn-danger btn-block" type="button">Удалить навсегда</button>
+        </div>
+    </div>
+
+    <!-- Модалка ввода кода 2FA -->
+    <div id="tfa-modal" class="modal hidden">
+        <div class="modal-backdrop" data-close></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="tfa-title">
+            <button class="modal-close" data-close type="button" aria-label="Закрыть">✕</button>
+            <h3 id="tfa-title" class="admin-title">🔐 Подтверждение входа</h3>
+            <p class="admin-del-text" id="tfa-email">Код отправлен на почту…</p>
+            <label class="field">
+                <span>Код из письма</span>
+                <input type="text" id="tfa-code" inputmode="numeric" pattern="\d{6}" maxlength="6" placeholder="123456" autocomplete="one-time-code">
+            </label>
+            <p id="tfa-msg" class="form-error"></p>
+            <button id="tfa-submit" class="btn btn-primary btn-block" type="button">Подтвердить</button>
+            <p class="auth-note">Код действует 10 минут. Письмо могло попасть в спам.</p>
+        </div>
+    </div>
+
+    <!-- Модалка чата с другом -->
+    <div id="chat-modal" class="modal hidden">
+        <div class="modal-backdrop" data-close></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="chat-peer">
+            <button class="modal-close" data-close type="button" aria-label="Закрыть">✕</button>
+            <h3 id="chat-peer" class="admin-title">✉ Сообщение</h3>
+            <ul id="chat-list" class="chat-list"></ul>
+            <p id="chat-empty" class="friends-empty hidden">Сообщений пока нет — напиши первым!</p>
+            <div class="email-row">
+                <input type="text" id="chat-input" placeholder="Текст сообщения…" maxlength="1000" autocomplete="off">
+                <button id="chat-send" class="btn btn-primary btn-small" type="button">➤</button>
+            </div>
         </div>
     </div>
 
