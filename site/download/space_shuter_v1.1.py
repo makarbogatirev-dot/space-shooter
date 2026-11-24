@@ -9,12 +9,16 @@ def draw_text(surf,text,size_text,x,y):
     font = pygame.font.Font(font_name, size_text)
     text_surface = font.render(text, True, WHITE)
     text_rect = text_surface.get_rect()
-    text_rect.midtop = (x, y)
+    text_rect.x = x
+    text_rect.y = y
     surf.blit(text_surface, text_rect)
 
 def draw_player_health(surf,x,y,hp,size,max_hp):
+    global player_health
     if hp < 0:
         hp = 0
+    if hp >= 100:
+        player_health = 101
     
     bar_length = size
     bar_height = size // 10
@@ -28,15 +32,24 @@ def draw_player_health(surf,x,y,hp,size,max_hp):
     pygame.draw.rect(surf, GREEN, fill_rect)
     pygame.draw.rect(surf, WHITE, background_rect, 1)
 
-def spawn_bonus():
-    pass
-
-def CheatsON():
+def GodON():
     global God
     God = True
-def CheatsOFF():
+def GodOFF():
     global God
     God = False
+
+def penetrationON():
+    global Penetration
+    Penetration = True
+def penetrationOFF():
+    global Penetration
+    Penetration = False
+
+def CheatsON():
+    GodON()
+def CheatsOFF():
+    GodOFF()
 
 class Player(pygame.sprite.Sprite):
     def __init__(self):
@@ -51,6 +64,13 @@ class Player(pygame.sprite.Sprite):
         self.last_shoot = pygame.time.get_ticks()
         self.radius = self.rect.width * 0.25
         self.player_health = 100
+        self.bonus_time = 0
+        self.bonus_speed = False
+        self.bonus_god = False
+        self.bonus_penetration = False
+        self.extra_speed = 0
+        self.bonus_god = False
+        self.bonus_penetration = False
     def update(self):
         if self.rect.right <= 0:
             self.rect.left = WIDTH
@@ -59,9 +79,9 @@ class Player(pygame.sprite.Sprite):
         self.speedx = 0
         keystate = pygame.key.get_pressed()
         if keystate[pygame.K_LEFT] or keystate[pygame.K_a]:
-            self.speedx = -10
+            self.speedx = -10 - self.extra_speed
         if keystate[pygame.K_RIGHT] or keystate[pygame.K_d]:
-            self.speedx = 10
+            self.speedx = 10 + self.extra_speed
         if keystate[pygame.K_SPACE]:
             self.create_bullet()
         if keystate[pygame.K_9]:
@@ -73,6 +93,34 @@ class Player(pygame.sprite.Sprite):
                 print("Cheats: OFF")
             CheatsOFF()
         self.rect.x += self.speedx
+        if self.bonus_god == True:
+            self.image = pygame.image.load(path.join(img_dir,"player_god.png")).convert_alpha()
+        else:
+            self.image = pygame.image.load(path.join(img_dir,"player.png")).convert_alpha()
+                
+        if self.bonus_speed == True:
+            now = pygame.time.get_ticks()
+            if now - self.bonus_time <= 10000:
+                self.extra_speed = 10
+            else:
+                self.bonus_speed = False
+                self.extra_speed = 0
+                
+        if self.bonus_god == True:
+            now = pygame.time.get_ticks()
+            if now - self.bonus_time <= 15000:
+                GodON()
+            else:
+                self.bonus_god = False
+                GodOFF()
+                
+        if self.bonus_penetration == True:
+            now = pygame.time.get_ticks()
+            if now - self.bonus_time <= 10000:
+                penetrationON()
+            else:
+                self.bonus_penetration = False
+                penetrationOFF()
     def create_bullet(self):
         laser_img = pygame.image.load(path.join(img_dir,"laser/laserRed07.png")).convert()
         laser_img.set_colorkey(BLACK)
@@ -84,6 +132,10 @@ class Player(pygame.sprite.Sprite):
             sprites.add(bullet)
             self.last_shoot = now
             pew_sound.play()
+            if self.bonus_penetration == True:
+                bullet.image = pygame.image.load(path.join(img_dir,"laser/laserRed16.png")).convert_alpha()
+            else:
+                bullet.image = pygame.image.load(path.join(img_dir,"laser/laserRed07.png")).convert_alpha()
 
 class Mobs(pygame.sprite.Sprite):
     def __init__(self):
@@ -280,6 +332,12 @@ Score = 0
 
 God = False
 
+powerups = pygame.sprite.Group()
+
+Penetration = False
+
+Powers = ""
+
 for i in range(1,20):
     Mob = Mobs()
 
@@ -298,7 +356,8 @@ while cicl:
     hits = pygame.sprite.spritecollide(player,mobs,True, pygame.sprite.collide_circle)
 
     for hit in hits:
-        player_health -= 25
+        if not God == True:
+            player_health -= 25
         Mob = Mobs()
         sprites.add(Mob)
         mobs.add(Mob)
@@ -310,7 +369,10 @@ while cicl:
         if player_health <= 0:
             cicl = God
 
-    hits = pygame.sprite.groupcollide(bullets,mobs,True,True)
+    if Penetration == True:
+        hits = pygame.sprite.groupcollide(bullets,mobs,False,True)
+    if Penetration == False:
+        hits = pygame.sprite.groupcollide(bullets,mobs,True,True)
 
     for hit in hits:
         Mob = Mobs()
@@ -320,9 +382,27 @@ while cicl:
         Score += 1
         expule = Explosion(hit.rect.center,"small",85,85)
         sprites.add(expule)
-        if random.random() > 0.95:
+        if random.random() > 0.99:
             power = PowerBonus(hit.rect.center)
             sprites.add(power)
+            powerups.add(power)
+
+    hits = pygame.sprite.spritecollide(player,powerups,True)
+
+    for hit in hits:
+        player.bonus_time = pygame.time.get_ticks()
+        print("Выдача силы!")
+        if hit.type == "speed":
+            player.bonus_speed = True
+            print(hit.type)
+        elif hit.type == "god":
+            player.bonus_god = True
+            player_health += 25
+            print(hit.type)
+        elif hit.type == "penetration":
+            player.bonus_penetration = True
+            print(hit.type)
+        
 
     sprites.update()
 
@@ -332,7 +412,16 @@ while cicl:
 
     sprites.draw(screen)
 
-    draw_text(screen,f"Score:{Score}",35,125,15)
+    draw_text(screen,f"Score:{Score}",35,25,15)
+
+    #draw_text(screen,f"Powers:{Powers}",20,25,55)
+
+    if player.bonus_speed == True:
+        draw_text(screen,f"Speed",20,25,55)
+    if player.bonus_god == True:
+        draw_text(screen,f"God",20,25,70)
+    if player.bonus_penetration == True:
+        draw_text(screen,f"Penetration",20,25,85)
 
     draw_player_health(screen,375,20,player_health,185,100)
     
