@@ -567,12 +567,13 @@ def create_session(conn: sqlite3.Connection, user_id: int, ua: str = "",
     )
     conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
     # Не больше MAX_SESSIONS_PER_USER активных сессий: самые старые вытесняем.
-    old = conn.execute(
-        """SELECT token FROM sessions WHERE user_id = ?
-           ORDER BY created_at DESC LIMIT -1 OFFSET ?""",
-        (user_id, MAX_SESSIONS_PER_USER),
+    # Фильтруем в Python, а не через «LIMIT -1 OFFSET n»: это синтаксис SQLite,
+    # PostgreSQL на нём падает (LIMIT must not be negative).
+    rows = conn.execute(
+        "SELECT token FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
+        (user_id,),
     ).fetchall()
-    for r in old:
+    for r in rows[MAX_SESSIONS_PER_USER:]:
         conn.execute("DELETE FROM sessions WHERE token = ?", (r["token"],))
     return token
 
