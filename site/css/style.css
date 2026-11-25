@@ -1549,6 +1549,54 @@ img { max-width: 100%; display: block; }
     opacity: .6;
 }
 
+/* --- Share Block --- */
+.share-block {
+    margin: 1.5rem auto .5rem;
+    max-width: 480px;
+}
+.share-title {
+    color: var(--clr-text-dim);
+    font-size: .85rem;
+    margin: 0 0 .6rem;
+}
+.share-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    justify-content: center;
+}
+.share-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: .3rem;
+    padding: .45rem .8rem;
+    border: 1px solid var(--clr-border);
+    border-radius: 8px;
+    background: rgba(255,255,255,.06);
+    color: var(--clr-text);
+    font-size: .82rem;
+    cursor: pointer;
+    transition: background .2s, border-color .2s;
+}
+.share-btn:hover {
+    background: rgba(255,255,255,.12);
+    border-color: var(--clr-accent);
+}
+.share-btn:active {
+    transform: scale(.97);
+}
+.share-msg {
+    margin: .5rem 0 0;
+    font-size: .8rem;
+    color: #00cc88;
+    min-height: 1.2em;
+    opacity: 0;
+    transition: opacity .3s;
+}
+.share-msg.show {
+    opacity: 1;
+}
+
 /* --- Responsive --- */
 @media (max-width: 768px) {
     .nav-menu {

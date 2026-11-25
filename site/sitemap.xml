@@ -1,6 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">
   <url>
     <loc>https://makarbogatirev-dot.github.io/space-shooter/site/</loc>
+    <lastmod>2026-11-24</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+    <image:image>
+      <image:loc>https://makarbogatirev-dot.github.io/space-shooter/site/assets/screenshots/og-cover.png</image:loc>
+      <image:title>Space Shooter — Космический Шутер</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://makarbogatirev-dot.github.io/space-shooter/site/assets/screenshots/gameplay1.png</image:loc>
+      <image:title>Геймплей Space Shooter</image:title>
+    </image:image>
+    <image:image>
+      <image:loc>https://makarbogatirev-dot.github.io/space-shooter/site/assets/screenshots/gameplay2.png</image:loc>
+      <image:title>Бонусы в Space Shooter</image:title>
+    </image:image>
   </url>
 </urlset>

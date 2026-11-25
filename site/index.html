@@ -3,7 +3,60 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Space Shooter — Космический Шутер</title>
+    <title>Space Shooter — Космический Шутер | Бесплатная браузерная и десктоп игра</title>
+    <meta name="description" content="Space Shooter — космический шутер с бонусами, анимациями метеоритов, системой друзей и чатом. Играй в браузере или скачай .exe. Рекорды, таблицы лидеров, 2FA защита.">
+    <meta name="keywords" content="космический шутер, space shooter, бесплатная игра, браузерная игра, скачать игру, pygame, космос, метеориты, стрелялка">
+    <meta name="author" content="Space Shooter Team">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://makarbogatirev-dot.github.io/space-shooter/site/">
+
+    <!-- Open Graph (Telegram, VK, Discord, Facebook) -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Space Shooter — Космический Шутер">
+    <meta property="og:description" content="Космический шутер с бонусами, анимациями метеоритов, системой друзей и чатом. Играй в браузере или скачай .exe.">
+    <meta property="og:url" content="https://makarbogatirev-dot.github.io/space-shooter/site/">
+    <meta property="og:image" content="https://makarbogatirev-dot.github.io/space-shooter/site/assets/screenshots/og-cover.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="Space Shooter — скриншот игры">
+    <meta property="og:site_name" content="Space Shooter">
+    <meta property="og:locale" content="ru_RU">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Space Shooter — Космический Шутер">
+    <meta name="twitter:description" content="Космический шутер с бонусами, анимациями метеоритов, системой друзей и чатом.">
+    <meta name="twitter:image" content="https://makarbogatirev-dot.github.io/space-shooter/site/assets/screenshots/og-cover.png">
+
+    <!-- Theme & Mobile -->
+    <meta name="theme-color" content="#0a0a2e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+    <!-- JSON-LD для Google -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "VideoGame",
+      "name": "Space Shooter",
+      "description": "Космический шутер с бонусами Speed, God, Penetration. Анимации метеоритов, система друзей и чат, таблицы лидеров.",
+      "url": "https://makarbogatirev-dot.github.io/space-shooter/site/",
+      "image": "https://makarbogatirev-dot.github.io/space-shooter/site/assets/screenshots/og-cover.png",
+      "genre": ["Шутер", "Аркада", "Космос"],
+      "gamePlatform": ["Веб-браузер", "Windows"],
+      "applicationCategory": "Game",
+      "operatingSystem": "Windows, Web Browser",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "RUB"
+      },
+      "author": {
+        "@type": "Person",
+        "name": "Space Shooter Team"
+      }
+    }
+    </script>
     <link rel="icon" type="image/x-icon" href="assets/img/favicon.ico">
     <link rel="stylesheet" href="css/style.css">
 </head>
@@ -658,6 +711,19 @@
         <div class="footer-content">
             <div class="footer-logo">🚀 Space Shooter</div>
             <p class="footer-text">Космический шутер на Python с использованием Pygame</p>
+
+            <!-- Поделиться: единственный бесплатный канал привлечения игроков -->
+            <div class="share-block">
+                <p class="share-title">Понравилась игра? Расскажи друзьям 👇</p>
+                <div class="share-buttons">
+                    <button class="share-btn share-tg" data-share="telegram" type="button">✈️ Telegram</button>
+                    <button class="share-btn share-vk" data-share="vk" type="button">💙 ВКонтакте</button>
+                    <button class="share-btn share-wa" data-share="whatsapp" type="button">💬 WhatsApp</button>
+                    <button class="share-btn share-copy" data-share="copy" type="button">🔗 Скопировать ссылку</button>
+                </div>
+                <p class="share-msg" id="share-msg"></p>
+            </div>
+
             <p class="footer-copy">&copy; 2026 Space Shooter. Все права защищены.</p>
         </div>
     </footer>

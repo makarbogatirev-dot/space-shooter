@@ -7,7 +7,64 @@ document.addEventListener('DOMContentLoaded', () => {
     initMobileMenu();
     initScrollAnimations();
     initActiveNav();
+    initShare();
 });
+
+/* --- Кнопки «Поделиться» --- */
+function initShare() {
+    const buttons = document.querySelectorAll('[data-share]');
+    const msgEl = document.getElementById('share-msg');
+    if (!buttons.length) return;
+
+    const url = location.href.split('#')[0];
+    const text = 'Space Shooter — космический шутер. Играй в браузере или скачай .exe 🚀';
+
+    function showMsg(msg, ok = true) {
+        if (!msgEl) return;
+        msgEl.textContent = msg;
+        msgEl.style.color = ok ? '#00cc88' : '#ff6b6b';
+        msgEl.classList.add('show');
+        setTimeout(() => msgEl.classList.remove('show'), 3000);
+    }
+
+    const links = {
+        telegram: 'https://t.me/share/url?url=' + encodeURIComponent(url) +
+                  '&text=' + encodeURIComponent(text),
+        vk: 'https://vk.com/share.php?url=' + encodeURIComponent(url) +
+            '&title=' + encodeURIComponent(text),
+        whatsapp: 'https://wa.me/?text=' + encodeURIComponent(text + ' ' + url)
+    };
+
+    buttons.forEach(btn => {
+        btn.addEventListener('click', async () => {
+            const kind = btn.dataset.share;
+            if (kind === 'copy') {
+                try {
+                    await navigator.clipboard.writeText(url);
+                    showMsg('Ссылка скопирована ✓');
+                } catch {
+                    // Фолбэк для браузеров без Clipboard API (http, старые)
+                    const ta = document.createElement('textarea');
+                    ta.value = url;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try {
+                        document.execCommand('copy');
+                        showMsg('Ссылка скопирована ✓');
+                    } catch {
+                        showMsg('Не удалось скопировать — скопируй адрес из строки браузера', false);
+                    }
+                    document.body.removeChild(ta);
+                }
+                return;
+            }
+            const target = links[kind];
+            if (target) window.open(target, '_blank', 'noopener,width=600,height=500');
+        });
+    });
+}
 
 /* --- Theme toggle (dark/light) --- */
 function initTheme() {
