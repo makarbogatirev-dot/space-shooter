@@ -1575,6 +1575,7 @@ img { max-width: 100%; display: block; }
     background: rgba(255,255,255,.06);
     color: var(--clr-text);
     font-size: .82rem;
+    text-decoration: none;
     cursor: pointer;
     transition: background .2s, border-color .2s;
 }
@@ -1595,6 +1596,19 @@ img { max-width: 100%; display: block; }
 }
 .share-msg.show {
     opacity: 1;
+}
+
+/* --- Ссылки на автора (YouTube) --- */
+.author-links {
+    margin: 1.5rem auto .5rem;
+    max-width: 480px;
+}
+.share-yt {
+    border-color: rgba(255, 0, 0, .45);
+}
+.share-yt:hover {
+    background: rgba(255, 0, 0, .15);
+    border-color: #ff4444;
 }
 
 /* --- Responsive --- */
