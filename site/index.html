@@ -365,7 +365,7 @@
                     </label>
                     <label class="field">
                         <span>Пароль</span>
-                        <input type="password" id="reg-pass" placeholder="Минимум 6 символов" minlength="6" required>
+                        <input type="password" id="reg-pass" placeholder="Минимум 8 символов" minlength="8" required>
                     </label>
                     <label class="field">
                         <span>Повтор пароля</span>
@@ -436,17 +436,19 @@
                         <p class="profile-hint" id="mail-note">Проверяем статус почты…</p>
                         <div class="email-row">
                             <input type="email" id="profile-email" class="admin-search" placeholder="you@example.com" maxlength="200" autocomplete="email">
+                            <input type="password" id="email-pass" class="admin-search" placeholder="Текущий пароль" maxlength="200" autocomplete="current-password">
                             <button id="email-save-btn" class="btn btn-secondary btn-small" type="button">Сохранить</button>
                         </div>
                         <p id="email-msg" class="form-error"></p>
+                        <p class="profile-hint">Смена email требует пароль — на старый адрес придёт предупреждение.</p>
                     </div>
                     <div class="profile-section">
                         <h4 class="profile-section-title">🔑 Смена пароля</h4>
                         <label class="field"><span>Текущий пароль</span>
                             <input type="password" id="pass-current" maxlength="200" autocomplete="current-password">
                         </label>
-                        <label class="field"><span>Новый пароль (минимум 6 символов)</span>
-                            <input type="password" id="pass-new" minlength="6" maxlength="200" autocomplete="new-password">
+                        <label class="field"><span>Новый пароль (минимум 8 символов)</span>
+                            <input type="password" id="pass-new" minlength="8" maxlength="200" autocomplete="new-password">
                         </label>
                         <button id="pass-save-btn" class="btn btn-secondary btn-small" type="button">Сменить пароль</button>
                         <p id="pass-msg" class="form-error"></p>

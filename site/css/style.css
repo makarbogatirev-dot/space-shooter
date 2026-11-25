@@ -1394,8 +1394,9 @@ img { max-width: 100%; display: block; }
 .email-row {
     display: flex;
     gap: .5rem;
+    flex-wrap: wrap;
 }
-.email-row input { flex: 1; min-width: 0; }
+.email-row input { flex: 1 1 12rem; min-width: 0; }
 .friends-list {
     list-style: none;
     margin-top: .6rem;

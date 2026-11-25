@@ -56,7 +56,10 @@ else:
 
 PBKDF2_ITERATIONS = 200_000
 SALT_BYTES = 16
-SESSION_TTL = 60 * 60 * 24 * 30  # 30 дней
+SESSION_TTL = 60 * 60 * 24 * 30  # абсолютный максимум жизни сессии: 30 дней
+SESSION_IDLE_TTL = 60 * 60 * 24 * 7  # «скольжение»: активная сессия живёт 7 дней
+MAX_SESSIONS_PER_USER = 5          # сколько устройств может быть одновременно
+PASSWORD_MIN = 8                   # минимальная длина пароля (с 24.11.2026)
 MAX_BODY = 8 * 1024
 NAME_RE = re.compile(r"^[A-Za-zА-Яа-яЁё0-9_]{3,20}$")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
@@ -273,6 +276,10 @@ def verify_tfa_code(conn, user_id: int, code: str) -> bool:
             "UPDATE tfa SET code_attempts = code_attempts + 1 WHERE user_id = ?",
             (user_id,),
         )
+        # Коммитим сразу: вызывающий код бросит 401, а context manager db()
+        # откатил бы транзакцию — и счётчик попыток не рос бы никогда
+        # (6-значный код можно было бы брутфорсить бесконечно).
+        conn.commit()
         return False
     # Код использован — гасим его.
     conn.execute(
@@ -364,7 +371,8 @@ def db_init() -> None:
                 created_at BIGINT  NOT NULL,
                 expires_at BIGINT  NOT NULL,
                 device     TEXT    NOT NULL DEFAULT '',
-                last_seen  BIGINT  NOT NULL DEFAULT 0
+                last_seen  BIGINT  NOT NULL DEFAULT 0,
+                fp         TEXT    NOT NULL DEFAULT ''
             );
             CREATE TABLE IF NOT EXISTS banned_ips (
                 ip         TEXT    PRIMARY KEY,
@@ -460,6 +468,8 @@ def db_init() -> None:
             conn.execute("ALTER TABLE sessions ADD COLUMN device TEXT NOT NULL DEFAULT ''")
         if "last_seen" not in s_cols:
             conn.execute("ALTER TABLE sessions ADD COLUMN last_seen BIGINT NOT NULL DEFAULT 0")
+        if "fp" not in s_cols:
+            conn.execute("ALTER TABLE sessions ADD COLUMN fp TEXT NOT NULL DEFAULT ''")
 
 
 # ------------------------------------------------------------------- пароли
@@ -519,26 +529,89 @@ def describe_ua(ua: str) -> str:
     return f"{browser} · {os_name}" if os_name else browser
 
 
-def create_session(conn: sqlite3.Connection, user_id: int, ua: str = "") -> str:
+def _ip_prefix(ip: str) -> str:
+    """«Подсеть» клиента: IPv4 — первые 3 октета, IPv6 — /48.
+
+    Привязываем сессию не к точному IP (мобильный оператор меняет его каждые
+    несколько минут), а к подсети — так вход не слетает у честного игрока,
+    но украденный токен с другого провайдера/страны уже не работает."""
+    if ":" in ip:  # IPv6
+        parts = ip.split("%")[0].split(":")
+        return ":".join(parts[:3])
+    parts = ip.split(".")
+    if len(parts) == 4:
+        return ".".join(parts[:3])
+    return ip
+
+
+def device_fingerprint(ip: str, ua: str) -> str:
+    """Отпечаток устройства = SHA-256 от подсети IP и User-Agent.
+
+    Сессия принимается только с тем же отпечатком, что был при входе.
+    Даже если кто-то узнает сам токен (утечка логов, XSS из localStorage),
+    использовать его с другой машины/браузера не получится — сервер сожжёт
+    такую сессию при первом же запросе."""
+    raw = f"{_ip_prefix(ip)}|{ua[:200]}".encode("utf-8", "replace")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def create_session(conn: sqlite3.Connection, user_id: int, ua: str = "",
+                   ip: str = "") -> str:
     token = secrets.token_urlsafe(32)
     now = int(time.time())
+    fp = device_fingerprint(ip, ua) if ip else ""
     conn.execute(
-        """INSERT INTO sessions (token, user_id, created_at, expires_at, device, last_seen)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (token, user_id, now, now + SESSION_TTL, describe_ua(ua)[:120], now),
+        """INSERT INTO sessions (token, user_id, created_at, expires_at, device, last_seen, fp)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (token, user_id, now, now + SESSION_IDLE_TTL, describe_ua(ua)[:120], now, fp),
     )
     conn.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+    # Не больше MAX_SESSIONS_PER_USER активных сессий: самые старые вытесняем.
+    old = conn.execute(
+        """SELECT token FROM sessions WHERE user_id = ?
+           ORDER BY created_at DESC LIMIT -1 OFFSET ?""",
+        (user_id, MAX_SESSIONS_PER_USER),
+    ).fetchall()
+    for r in old:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (r["token"],))
     return token
 
 
-def user_by_token(conn: sqlite3.Connection, token: str) -> sqlite3.Row | None:
+def user_by_token(conn: sqlite3.Connection, token: str,
+                  fp: str = "") -> sqlite3.Row | None:
+    """Находит пользователя по токену и сверяет отпечаток устройства.
+
+    fp пустой — проверка отпечатка пропущена (для клиентов без IP-информации).
+    Сессии, созданные до введения отпечатка (fp = '' в базе), работают, но
+    при первом же запросе «дозapisывают» себе текущий отпечаток."""
     if not token:
         return None
+    now = int(time.time())
     row = conn.execute(
-        """SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+        """SELECT u.*, s.fp AS session_fp, s.created_at AS session_created
+           FROM sessions s JOIN users u ON u.id = s.user_id
            WHERE s.token = ? AND s.expires_at > ?""",
-        (token, int(time.time())),
+        (token, now),
     ).fetchone()
+    if not row:
+        return None
+    session_fp = row["session_fp"] or ""
+    if session_fp and fp and not hmac.compare_digest(session_fp, fp):
+        # Токен украли/скопировали и используют с другой машины — сжигаем сессию.
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+        # Коммитим сразу: дальше бросим 401, а db() откатил бы транзакцию,
+        # и украденный токен остался бы жив.
+        conn.commit()
+        _safe_print("Сессия сожжена: отпечаток не совпал (токен, вероятно, украден)", flush=True)
+        return None
+    if not session_fp and fp:
+        conn.execute("UPDATE sessions SET fp = ? WHERE token = ?", (fp, token))
+    # Скользящий TTL: продлеваем до now + IDLE, но не дольше абсолютного
+    # потолка created_at + SESSION_TTL.
+    hard_stop = int(row["session_created"]) + SESSION_TTL
+    new_expiry = min(now + SESSION_IDLE_TTL, hard_stop)
+    if new_expiry > now:
+        conn.execute("UPDATE sessions SET expires_at = ? WHERE token = ?", (new_expiry, token))
     return row
 
 
@@ -673,11 +746,14 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
     def client_ip(self) -> str:
-        # За прокси (Render, nginx) адрес сокета — это адрес прокси, поэтому
-        # берём первый адрес из X-Forwarded-For, иначе лимит попыток был бы общим.
+        # За прокси (Render, nginx) адрес сокета — это адрес прокси. В
+        # X-Forwarded-For клиент может вписать что угодно, поэтому берём
+        # ПОСЛЕДНИЙ адрес: его добавляет наш доверенный прокси (Render),
+        # и подделать его со стороны браузера нельзя. Иначе лимит попыток
+        # и привязка сессии к устройству обходились одной строчкой в curl.
         forwarded = self.headers.get("X-Forwarded-For") or ""
         if forwarded:
-            return forwarded.split(",")[0].strip()
+            return forwarded.split(",")[-1].strip()
         return self.client_address[0]
 
     def _cors_headers(self) -> None:
@@ -758,7 +834,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def require_user(self, conn: sqlite3.Connection) -> sqlite3.Row:
         token = self.session_token()
-        row = user_by_token(conn, token)
+        fp = device_fingerprint(self.client_ip(), self.headers.get("User-Agent") or "")
+        row = user_by_token(conn, token, fp)
         if not row:
             raise ApiError(401, "Требуется вход")
         # Отмечаем активность сессии (не чаще раза в 10 минут).
@@ -1034,8 +1111,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if not NAME_RE.match(name):
                 raise ApiError(400, "Ник: 3–20 символов, буквы, цифры и _")
-            if len(password) < 6:
-                raise ApiError(400, "Пароль: минимум 6 символов")
+            if len(password) < PASSWORD_MIN:
+                raise ApiError(400, f"Пароль: минимум {PASSWORD_MIN} символов")
             if len(password) > 200:
                 raise ApiError(400, "Пароль слишком длинный")
             if email and not EMAIL_RE.match(email):
@@ -1055,7 +1132,7 @@ class Handler(BaseHTTPRequestHandler):
                      email if email else None),
                 )
                 row = conn.execute("SELECT * FROM users WHERE name_key = ?", (name.lower(),)).fetchone()
-                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "")
+                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "", ip)
                 reset_attempts(ip)
                 if email:
                     send_email(
@@ -1096,7 +1173,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
 
                 # 2FA не включён — сразу даём сессию.
-                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "")
+                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "", ip)
                 self.send_json(200, {"token": token, "user": user_payload(conn, row)},
                                cookies=[self.session_cookie(token)])
             return
@@ -1183,16 +1260,32 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/me/email":
+            # Смена email — только с текущим паролем: иначе украденная сессия
+            # дала бы злоумышленнику полный контроль (новый email = сброс пароля).
+            # На СТАРЫЙ адрес уходит предупреждение, если он был.
             data = self.read_json()
             email = str(data.get("email") or "").strip()
+            current = str(data.get("current") or "")
             if email and not EMAIL_RE.match(email):
                 raise ApiError(400, "Некорректный email")
             with db() as conn:
                 row = self.require_user(conn)
+                if not verify_password(current, row["pass_hash"]):
+                    raise ApiError(401, "Текущий пароль неверен")
+                old_email = row["email"] if "email" in row.keys() else None
                 conn.execute(
                     "UPDATE users SET email = ? WHERE id = ?",
                     (email if email else None, row["id"]),
                 )
+                if old_email and old_email != email:
+                    send_email(
+                        old_email,
+                        "Email в Space Shooter изменён ⚠️",
+                        f"Привет, {row['name']}!\n\n"
+                        f"Email твоего аккаунта изменён с {old_email} на {email or '(удалён)'}, "
+                        "пароль был введён верно.\n"
+                        "Если это был не ты — срочно смени пароль: сделать это можно прямо в профиле.\n",
+                    )
                 row = conn.execute("SELECT * FROM users WHERE id = ?", (row["id"],)).fetchone()
                 self.send_json(200, {"user": user_payload(conn, row)})
             return
@@ -1203,8 +1296,8 @@ class Handler(BaseHTTPRequestHandler):
             data = self.read_json()
             current = str(data.get("current") or "")
             new_pass = str(data.get("new") or "")
-            if len(new_pass) < 6 or len(new_pass) > 200:
-                raise ApiError(400, "Новый пароль: минимум 6 символов")
+            if len(new_pass) < PASSWORD_MIN or len(new_pass) > 200:
+                raise ApiError(400, f"Новый пароль: минимум {PASSWORD_MIN} символов")
             with db() as conn:
                 row = self.require_user(conn)
                 if not verify_password(current, row["pass_hash"]):
@@ -1410,7 +1503,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not verify_tfa_code(conn, row["id"], code):
                     raise ApiError(401, "Неверный или просроченный код")
                 reset_attempts(ip)
-                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "")
+                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "", ip)
                 self.send_json(200, {"token": token, "user": user_payload(conn, row)},
                                cookies=[self.session_cookie(token)])
             return
@@ -1560,8 +1653,8 @@ class Handler(BaseHTTPRequestHandler):
 
             if path == "/api/admin/reset-password":
                 password = str(data.get("password") or "")
-                if len(password) < 6:
-                    raise ApiError(400, "Пароль: минимум 6 символов")
+                if len(password) < PASSWORD_MIN:
+                    raise ApiError(400, f"Пароль: минимум {PASSWORD_MIN} символов")
                 if len(password) > 200:
                     raise ApiError(400, "Пароль слишком длинный")
                 with db() as conn:

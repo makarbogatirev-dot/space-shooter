@@ -267,7 +267,7 @@
 
         if (name.length < 3 || name.length > 20) { regError.textContent = 'Ник: 3–20 символов'; return; }
         if (!/^[a-zA-Zа-яА-ЯёЁ0-9_]+$/.test(name)) { regError.textContent = 'Только буквы, цифры и _'; return; }
-        if (pass.length < 6) { regError.textContent = 'Пароль: минимум 6 символов'; return; }
+        if (pass.length < 8) { regError.textContent = 'Пароль: минимум 8 символов'; return; }
         if (pass !== pass2) { regError.textContent = 'Пароли не совпадают'; return; }
         if (email && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(email)) { regError.textContent = 'Некорректный email'; return; }
 
@@ -1046,7 +1046,7 @@
             const current = curInput.value;
             const next = newInput.value;
             if (!current) { msgEl.textContent = 'Введи текущий пароль'; return; }
-            if (next.length < 6) { msgEl.textContent = 'Новый пароль: минимум 6 символов'; return; }
+            if (next.length < 8) { msgEl.textContent = 'Новый пароль: минимум 8 символов'; return; }
             saveBtn.disabled = true;
             try {
                 await api('/api/me/password', {
@@ -1099,6 +1099,7 @@
        ============================================ */
     (function emailSection() {
         const emailInput = document.getElementById('profile-email');
+        const emailPass = document.getElementById('email-pass');
         const emailSaveBtn = document.getElementById('email-save-btn');
         const emailMsg = document.getElementById('email-msg');
         if (!emailInput || !emailSaveBtn) return;
@@ -1107,16 +1108,22 @@
             emailMsg.textContent = '';
             emailMsg.style.color = '';
             const email = emailInput.value.trim();
+            const current = emailPass ? emailPass.value : '';
             if (email && !/^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$/.test(email)) {
                 emailMsg.textContent = 'Некорректный email';
+                return;
+            }
+            if (!current) {
+                emailMsg.textContent = 'Введи текущий пароль — без него email не изменить';
                 return;
             }
             emailSaveBtn.disabled = true;
             try {
                 const data = await api('/api/me/email', {
-                    method: 'POST', body: { email: email || '' }, auth: true
+                    method: 'POST', body: { email: email || '', current }, auth: true
                 });
                 user = data.user;
+                if (emailPass) emailPass.value = '';
                 refreshUI();
                 emailMsg.textContent = 'Сохранено ✓';
                 emailMsg.style.color = '#00cc88';
