@@ -529,37 +529,24 @@ def describe_ua(ua: str) -> str:
     return f"{browser} · {os_name}" if os_name else browser
 
 
-def _ip_prefix(ip: str) -> str:
-    """«Подсеть» клиента: IPv4 — первые 3 октета, IPv6 — /48.
+def device_fingerprint(ua: str) -> str:
+    """Отпечаток устройства = SHA-256 от User-Agent.
 
-    Привязываем сессию не к точному IP (мобильный оператор меняет его каждые
-    несколько минут), а к подсети — так вход не слетает у честного игрока,
-    но украденный токен с другого провайдера/страны уже не работает."""
-    if ":" in ip:  # IPv6
-        parts = ip.split("%")[0].split(":")
-        return ":".join(parts[:3])
-    parts = ip.split(".")
-    if len(parts) == 4:
-        return ".".join(parts[:3])
-    return ip
+    Сессия принимается только с тем же браузером, что был при входе. Если
+    токен утёк (логи, XSS в localStorage, чужой компьютер) и его пытаются
+    использовать из другого браузера/ОС — сервер сожжёт такую сессию.
 
-
-def device_fingerprint(ip: str, ua: str) -> str:
-    """Отпечаток устройства = SHA-256 от подсети IP и User-Agent.
-
-    Сессия принимается только с тем же отпечатком, что был при входе.
-    Даже если кто-то узнает сам токен (утечка логов, XSS из localStorage),
-    использовать его с другой машины/браузера не получится — сервер сожжёт
-    такую сессию при первом же запросе."""
-    raw = f"{_ip_prefix(ip)}|{ua[:200]}".encode("utf-8", "replace")
-    return hashlib.sha256(raw).hexdigest()
+    IP в отпечаток сознательно НЕ входит: на Render запросы проходят через
+    пул прокси, и X-Forwarded-For у одного и того же клиента меняется между
+    запросами. Привязка к IP выкидывала бы честных игроков с мобильным
+    интернетом после каждого переподключения."""
+    return "v2:" + hashlib.sha256(ua[:200].encode("utf-8", "replace")).hexdigest()
 
 
-def create_session(conn: sqlite3.Connection, user_id: int, ua: str = "",
-                   ip: str = "") -> str:
+def create_session(conn: sqlite3.Connection, user_id: int, ua: str = "") -> str:
     token = secrets.token_urlsafe(32)
     now = int(time.time())
-    fp = device_fingerprint(ip, ua) if ip else ""
+    fp = device_fingerprint(ua)
     conn.execute(
         """INSERT INTO sessions (token, user_id, created_at, expires_at, device, last_seen, fp)
            VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -580,11 +567,12 @@ def create_session(conn: sqlite3.Connection, user_id: int, ua: str = "",
 
 def user_by_token(conn: sqlite3.Connection, token: str,
                   fp: str = "") -> sqlite3.Row | None:
-    """Находит пользователя по токену и сверяет отпечаток устройства.
+    """Находит пользователя по токену и сверяет отпечаток браузера.
 
-    fp пустой — проверка отпечатка пропущена (для клиентов без IP-информации).
-    Сессии, созданные до введения отпечатка (fp = '' в базе), работают, но
-    при первом же запросе «дозapisывают» себе текущий отпечаток."""
+    fp пустой — проверка отпечатка пропущена.
+    Сессии со старым форматом отпечатка (без префикса «v2:») не сжигаются,
+    а один раз перепривязываются к текущему браузеру — чтобы после смены
+    схемы отпечатка никто из игроков не вылетел из аккаунта."""
     if not token:
         return None
     now = int(time.time())
@@ -597,15 +585,19 @@ def user_by_token(conn: sqlite3.Connection, token: str,
     if not row:
         return None
     session_fp = row["session_fp"] or ""
-    if session_fp and fp and not hmac.compare_digest(session_fp, fp):
-        # Токен украли/скопировали и используют с другой машины — сжигаем сессию.
-        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
-        # Коммитим сразу: дальше бросим 401, а db() откатил бы транзакцию,
-        # и украденный токен остался бы жив.
-        conn.commit()
-        _safe_print("Сессия сожжена: отпечаток не совпал (токен, вероятно, украден)", flush=True)
-        return None
-    if not session_fp and fp:
+    if fp and session_fp and not hmac.compare_digest(session_fp, fp):
+        if session_fp.startswith("v2:"):
+            # Токен украли/скопировали и используют из другого браузера —
+            # сжигаем сессию.
+            conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+            # Коммитим сразу: дальше бросим 401, а db() откатил бы транзакцию,
+            # и украденный токен остался бы жив.
+            conn.commit()
+            _safe_print("Сессия сожжена: отпечаток не совпал (токен, вероятно, украден)", flush=True)
+            return None
+        # Старый формат отпечатка — плавная миграция без разлогина.
+        conn.execute("UPDATE sessions SET fp = ? WHERE token = ?", (fp, token))
+    elif fp and not session_fp:
         conn.execute("UPDATE sessions SET fp = ? WHERE token = ?", (fp, token))
     # Скользящий TTL: продлеваем до now + IDLE, но не дольше абсолютного
     # потолка created_at + SESSION_TTL.
@@ -747,14 +739,16 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
 
     def client_ip(self) -> str:
-        # За прокси (Render, nginx) адрес сокета — это адрес прокси. В
-        # X-Forwarded-For клиент может вписать что угодно, поэтому берём
-        # ПОСЛЕДНИЙ адрес: его добавляет наш доверенный прокси (Render),
-        # и подделать его со стороны браузера нельзя. Иначе лимит попыток
-        # и привязка сессии к устройству обходились одной строчкой в curl.
+        # За прокси (Render, nginx) адрес сокета — это адрес прокси.
+        # True-Client-IP Render ставит сам; X-Forwarded-For клиент может
+        # подделать, но Render дописывает реальный адрес первым. Если ничего
+        # нет (локальный запуск) — берём адрес сокета.
+        true_ip = (self.headers.get("True-Client-IP") or "").strip()
+        if true_ip:
+            return true_ip
         forwarded = self.headers.get("X-Forwarded-For") or ""
         if forwarded:
-            return forwarded.split(",")[-1].strip()
+            return forwarded.split(",")[0].strip()
         return self.client_address[0]
 
     def _cors_headers(self) -> None:
@@ -835,7 +829,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def require_user(self, conn: sqlite3.Connection) -> sqlite3.Row:
         token = self.session_token()
-        fp = device_fingerprint(self.client_ip(), self.headers.get("User-Agent") or "")
+        fp = device_fingerprint(self.headers.get("User-Agent") or "")
         row = user_by_token(conn, token, fp)
         if not row:
             raise ApiError(401, "Требуется вход")
@@ -1133,7 +1127,7 @@ class Handler(BaseHTTPRequestHandler):
                      email if email else None),
                 )
                 row = conn.execute("SELECT * FROM users WHERE name_key = ?", (name.lower(),)).fetchone()
-                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "", ip)
+                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "")
                 reset_attempts(ip)
                 if email:
                     send_email(
@@ -1149,6 +1143,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/login":
+            # Лимит по IP + отдельно по нику: X-Forwarded-For клиент может
+            # подделать, но подбирать пароль к одному аккаунту всё равно
+            # не выйдет — счётчик привязан к самому нику.
             if too_many_attempts(ip):
                 raise ApiError(429, "Слишком много попыток. Попробуйте позже.")
             data = self.read_json()
@@ -1156,14 +1153,19 @@ class Handler(BaseHTTPRequestHandler):
             password = str(data.get("password") or "")
             if not name or not password:
                 raise ApiError(400, "Заполните все поля")
+            name_key = "name:" + name.lower()
+            if too_many_attempts(name_key, limit=10):
+                raise ApiError(429, "Слишком много попыток входа. Попробуйте позже.")
 
             note_attempt(ip)
+            note_attempt(name_key)
             with db() as conn:
                 require_not_banned(conn, ip)
                 row = conn.execute("SELECT * FROM users WHERE name_key = ?", (name.lower(),)).fetchone()
                 if not row or not verify_password(password, row["pass_hash"]):
                     raise ApiError(401, "Неверный ник или пароль")
                 reset_attempts(ip)
+                reset_attempts(name_key)
                 conn.execute("UPDATE users SET last_ip = ? WHERE id = ?", (ip, row["id"]))
 
                 # --- 2FA ---
@@ -1174,7 +1176,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
 
                 # 2FA не включён — сразу даём сессию.
-                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "", ip)
+                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "")
                 self.send_json(200, {"token": token, "user": user_payload(conn, row)},
                                cookies=[self.session_cookie(token)])
             return
@@ -1504,7 +1506,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not verify_tfa_code(conn, row["id"], code):
                     raise ApiError(401, "Неверный или просроченный код")
                 reset_attempts(ip)
-                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "", ip)
+                token = create_session(conn, row["id"], self.headers.get("User-Agent") or "")
                 self.send_json(200, {"token": token, "user": user_payload(conn, row)},
                                cookies=[self.session_cookie(token)])
             return
